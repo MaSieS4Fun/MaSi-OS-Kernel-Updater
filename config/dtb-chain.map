@@ -1,0 +1,16 @@
+# ABL multidevice DTB chain (11 slots) — fixed ROCKNIX order.
+# source=reference  → slot extracted from ROCKNIX KERNEL (cache or vendored)
+# source=kbuild     → DTB built in .staging/dtbs/ (overlay on reference)
+#
+# SLOT|SOURCE|KBUILD_DTB|DEVICE
+0|reference||base
+1|reference||base
+2|reference||base
+3|reference||base
+4|reference||base
+5|kbuild|qcs8550-ayn-odin2.dtb|odin2
+6|kbuild|qcs8550-ayn-odin2mini.dtb|mini
+7|kbuild|qcs8550-ayn-odin2portal.dtb|portal
+8|kbuild|qcs8550-ayn-thor.dtb|thor
+9|reference||rp6
+10|reference||rp6-alt

@@ -1,0 +1,16 @@
+# DTB chain extract
+# source: /tmp/tmp.XK4k36uhA0/zImage
+# count: 11
+
+slot	size	hint	sha256_16
+0	176793	qcom,qcs8550	5d252807af98fcdd
+1	176534	qcom,qcs8550	f3a2c55e07d75320
+2	178818	qcom,qcs8550	5c6d9457d66763f5
+3	176223	qcom,qcs8550	b9b42b736ef05c18
+4	177169		5cd9e61ecede8e4e
+5	188388	ayn,odin2	796430e1635919ac
+6	186404	ayn,odin2mini	5c831abff32288a4
+7	189886	ayn,odin2portal	6ab0a59fced31dd8
+8	192261	ayn,thor	f0c772aeb7a6fcc5
+9	191012	retroidpocket,rp6	552b007530b76ae5
+10	190962	retroidpocket,rp6	58ad329f121cde84
