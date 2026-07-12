@@ -1,25 +1,40 @@
 #!/usr/bin/env bash
-# Assemble slot-00..slot-10 per config/dtb-chain.map
+# Assemble slot-NN.dtb chain from compiled kernel DTBs only.
 set -euo pipefail
 
 assemble_dtb_chain() {
-    local out_dir="$1" kbuild_dtb_dir="${2:-}" ref_dir="${3:-}"
+    local out_dir="$1" kbuild_dtb_dir="${2:-}" _ref_unused="${3:-}"
     local map="${ROOT}/config/dtb-chain.map"
-    local slot source kbuild_dtb device src_path
+    local ref_dir="${ROOT}/reference/armada-dtb-chain"
+    local slot source kbuild_dtb device src_path expected count
+
+    if [[ ! -f "${ref_dir}/slot-00.dtb" ]]; then
+        if [[ -f "${ROOT}/armada-boot-partition/KERNEL" ]]; then
+            echo "  extracting DTB reference chain..." >&2
+            "${ROOT}/scripts/extract-armada-dtb-chain.sh" || return 1
+        else
+            echo "  MISSING ${ref_dir}/ — run ./scripts/extract-armada-dtb-chain.sh" >&2
+            return 1
+        fi
+    fi
+
+    # shellcheck source=lib/dtb-chain/map.sh
+    source "${ROOT}/lib/dtb-chain/map.sh"
+    expected="$(dtb_chain_slot_count)"
 
     [[ -f "${map}" ]] || {
         echo "Missing ${map}" >&2
         return 1
     }
-    [[ -d "${ref_dir}" ]] || {
-        echo "Missing DTB reference directory: ${ref_dir}" >&2
+    [[ -d "${kbuild_dtb_dir}" ]] || {
+        echo "Missing compiled DTBs: ${kbuild_dtb_dir}" >&2
         return 1
     }
 
     rm -rf "${out_dir}"
     mkdir -p "${out_dir}"
 
-    echo "==> Assembling ABL DTB chain (11 slots)..." >&2
+    echo "==> Assembling ABL DTB chain (${expected} slots)..." >&2
 
     while IFS='|' read -r slot source kbuild_dtb device; do
         [[ -z "${slot}" || "${slot}" =~ ^# ]] && continue
@@ -27,20 +42,13 @@ assemble_dtb_chain() {
         src_path=""
 
         case "${source}" in
-            reference)
-                src_path="${ref_dir}/slot-${slot}.dtb"
-                ;;
             kbuild)
-                if [[ -n "${kbuild_dtb}" && -f "${kbuild_dtb_dir}/${kbuild_dtb}" ]]; then
-                    src_path="${kbuild_dtb_dir}/${kbuild_dtb}"
-                    echo "  slot-${slot}: kbuild ${kbuild_dtb} (${device})" >&2
-                elif [[ -f "${ref_dir}/slot-${slot}.dtb" ]]; then
-                    src_path="${ref_dir}/slot-${slot}.dtb"
-                    echo "  slot-${slot}: reference (no kbuild overlay ${kbuild_dtb})" >&2
-                else
-                    echo "  MISSING slot-${slot} (${device})" >&2
-                    return 1
-                fi
+                src_path="${kbuild_dtb_dir}/${kbuild_dtb}"
+                echo "  slot-${slot}: ${kbuild_dtb} (${device})" >&2
+                ;;
+            reference)
+                src_path="${ref_dir}/${kbuild_dtb}"
+                echo "  slot-${slot}: ${kbuild_dtb} (${device})" >&2
                 ;;
             *)
                 echo "  unknown source in slot ${slot}: ${source}" >&2
@@ -48,28 +56,24 @@ assemble_dtb_chain() {
                 ;;
         esac
 
-        if [[ "${source}" == "reference" ]]; then
-            echo "  slot-${slot}: reference (${device})" >&2
-        fi
-
         [[ -f "${src_path}" ]] || {
             echo "  MISSING ${src_path}" >&2
+            echo "  Run: ./scripts/extract-armada-dtb-chain.sh" >&2
             return 1
         }
         cp -f "${src_path}" "${out_dir}/slot-${slot}.dtb"
     done < "${map}"
 
-    local count
     count="$(find "${out_dir}" -name 'slot-*.dtb' | wc -l | tr -d ' ')"
-    [[ "${count}" -eq 11 ]] || {
-        echo "Incomplete chain: ${count}/11 slots" >&2
+    [[ "${count}" -eq "${expected}" ]] || {
+        echo "Incomplete chain: ${count}/${expected} slots" >&2
         return 1
     }
 
     {
-        echo "# DTB chain assembled — ABL multidevice"
+        echo "# DTB chain assembled (reference slot order)"
         echo "# date: $(date -Iseconds)"
-        echo "# kbuild overlay: ${kbuild_dtb_dir:-none}"
+        echo "# kbuild: ${kbuild_dtb_dir}"
         echo "# reference: ${ref_dir}"
         echo ""
         ls -1 "${out_dir}"/slot-*.dtb | while read -r f; do

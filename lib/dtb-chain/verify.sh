@@ -62,9 +62,14 @@ PY
 
 verify_abl_dtb_chain() {
     local zimage="$1"
-    local count missing=0
+    local count missing=0 min_slots
 
     [[ -f "${zimage}" ]] || return 1
+
+    # shellcheck source=lib/dtb-chain/map.sh
+    source "${ROOT}/lib/dtb-chain/map.sh"
+    min_slots="$(dtb_chain_min_slots)"
+
     count="$(python3 - "${zimage}" <<'PY'
 import struct, sys
 with open(sys.argv[1], "rb") as f:
@@ -86,8 +91,8 @@ PY
 )"
 
     echo "==> ABL chain verification (${count} DTBs)" >&2
-    [[ "${count}" -ge 11 ]] || {
-        echo "  ERROR: expected ≥11 DTBs, found ${count}" >&2
+    [[ "${count}" -ge "${min_slots}" ]] || {
+        echo "  ERROR: expected ≥${min_slots} DTBs, found ${count}" >&2
         return 1
     }
 
@@ -97,6 +102,13 @@ PY
         echo "    [${n}] ${hint} ${model:+(model=${model})}" >&2
     done < <(list_dtb_chain_slots "${zimage}")
 
+    for needle in "qcom,qcs8550-aim300" "qcom,qcs8550-aim300-aiot"; do
+        if list_dtb_chain_slots "${zimage}" | grep -qF "${needle}"; then
+            echo "  ERROR: chain includes ${needle} — breaks Mini/Portal/Thor selection" >&2
+            missing=1
+        fi
+    done
+
     for needle in "ayn,odin2mini" "ayn,odin2portal" "ayn,odin2" "ayn,thor" "retroidpocket,rp6"; do
         if ! list_dtb_chain_slots "${zimage}" | grep -qF "${needle}"; then
             echo "  MISSING compatible: ${needle}" >&2
@@ -105,7 +117,33 @@ PY
     done
 
     [[ "${missing}" -eq 0 ]] || return 1
-    echo "  OK — ABL will pick DTB by hardware (no devicetree= in EFI cmdline)" >&2
+    verify_armada_chain_order "${zimage}" || return 1
+    echo "  OK — ABL picks DTB by device index (reference slot order)" >&2
+    echo "  Set ROCKNIX-ABL → Set the Device → your exact model" >&2
+}
+
+verify_armada_chain_order() {
+    local zimage="$1"
+    local -a expect=(
+        "1:ayn,odin2portal"
+        "2:ayn,odin2"
+        "3:ayn,odin2mini"
+        "4:ayn,thor"
+        "5:retroidpocket,rp6"
+    )
+    local line n hint pair
+
+    while IFS=$'\t' read -r n _ _ hint; do
+        [[ -n "${n}" ]] || continue
+        for pair in "${expect[@]}"; do
+            [[ "${pair%%:*}" == "${n}" ]] || continue
+            if [[ "${hint}" != *"${pair#*:}"* ]]; then
+                echo "  ERROR: DTB slot ${n} is '${hint}' — expected ${pair#*:} (reference index)" >&2
+                return 1
+            fi
+        done
+    done < <(list_dtb_chain_slots "${zimage}")
+    return 0
 }
 
 assert_no_efi_devicetree() {

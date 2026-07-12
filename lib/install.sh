@@ -187,6 +187,7 @@ EOF
 
 install_from_build() {
     local build="$1" release modules_src firmware_src
+    local kernel_src kernel_stage boot_stage
 
     release="$(install_resolve_release "${build}")" || {
         echo "No modules/* found in ${build}" >&2
@@ -200,13 +201,37 @@ install_from_build() {
         return 1
     }
 
+    kernel_src="${build}/boot/KERNEL"
+    boot_stage="${OUTPUT_DIR}/.install-staging/boot"
+    kernel_stage="${boot_stage}/KERNEL"
+    rm -rf "${OUTPUT_DIR}/.install-staging"
+    mkdir -p "${boot_stage}"
+    cp -a "${build}/boot/." "${boot_stage}/"
+
+    if [[ "${INSTALL_REPACK_KERNEL:-1}" == "1" ]]; then
+        # shellcheck source=lib/cmdline.sh
+        source "${ROOT}/lib/cmdline.sh"
+        # shellcheck source=lib/bootimg.sh
+        source "${ROOT}/lib/bootimg.sh"
+        repack_bootimg_local_uuid "${kernel_src}" "${kernel_stage}" "${release}" \
+            || cp -f "${kernel_src}" "${kernel_stage}"
+    fi
+
+    if install_boot_is_vfat \
+        && [[ "${INSTALL_WRITE_LINUXLOADER_CFG:-1}" == "1" ]] \
+        && [[ ! -f "${INSTALL_BOOT_DST}/LinuxLoader.cfg" ]]; then
+        # shellcheck source=lib/cmdline.sh
+        source "${ROOT}/lib/cmdline.sh" 2>/dev/null || true
+        "${ROOT}/scripts/setup-linuxloader-cfg.sh" "${boot_stage}/LinuxLoader.cfg" 2>/dev/null || true
+    fi
+
     echo "==> Clean install from ${build}/ (release ${release})" >&2
 
     echo "  wiping ${INSTALL_BOOT_DST}/" >&2
     install_boot_is_vfat && echo "  (boot on FAT)" >&2
     _install_wipe_dir "${INSTALL_BOOT_DST}"
-    echo "  ${INSTALL_BOOT_DST}/ ← boot/" >&2
-    _install_cp_tree "${build}/boot" "${INSTALL_BOOT_DST}"
+    echo "  ${INSTALL_BOOT_DST}/ ← boot/ (KERNEL UUID for this device)" >&2
+    _install_cp_tree "${boot_stage}" "${INSTALL_BOOT_DST}"
     sync "${INSTALL_BOOT_DST}" 2>/dev/null || sync
 
     if [[ -d "${firmware_src}" ]]; then

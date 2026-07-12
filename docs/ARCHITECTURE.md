@@ -45,8 +45,9 @@ Quality inspiration: small gold initrd (~47 MB, no `.ko` in cpio) — **without*
 ## Bootimg cmdline
 
 ```
-root=UUID=<uuid> clk_ignore_unused pd_ignore_unused quiet rw rootwait psi=0
-arm64.nopauth efi=noruntime video=efifb:off
+clk_ignore_unused pd_ignore_unused quiet rw rootwait root=UUID=<uuid>
 ```
+
+UUID from `/boot/LinuxLoader.cfg` or `/boot/KERNEL`. Optional: `ABL_CMDLINE_EXTRAS=1`.
 
 No `irqaffinity=0-2`, `fw_devlink.strict=1`, or **`devicetree=` / `dtb=`** (ABL picks the DTB).

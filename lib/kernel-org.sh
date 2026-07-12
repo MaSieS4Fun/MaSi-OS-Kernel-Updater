@@ -39,22 +39,19 @@ kernel_tarball_validate() {
     local magic
     magic="$(head -c 6 "${tar}" | od -An -tx1 | tr -d ' \n')"
     case "${magic}" in
-        1f8b*)
-            gzip -t "${tar}" 2>/dev/null
-            ;;
+        1f8b*) gzip -t "${tar}" 2>/dev/null ;;
         fd377a*)
             command -v xz >/dev/null 2>&1 || return 1
             xz -t "${tar}" 2>/dev/null
             ;;
-        *)
-            return 1
-            ;;
+        *) return 1 ;;
     esac
 }
 
 kernel_tarball_urls() {
     local ver="$1" series rel base src
     local -a urls=()
+
     series="$(kernel_version_to_series "${ver}")"
     rel="${series}/linux-${ver}.tar.xz"
 
@@ -67,7 +64,6 @@ kernel_tarball_urls() {
     done
 
     urls+=("$(kernel_github_stable_url "${ver}")")
-
     printf '%s\n' "${urls[@]}" | awk '!seen[$0]++'
 }
 
@@ -125,10 +121,10 @@ extract_kernel_tarball() {
         fi
     fi
 
-    if [[ ! -f "${dest}/Makefile" ]]; then
+    [[ -f "${dest}/Makefile" ]] || {
         echo "Error: linux-${ver} extraction missing Makefile in ${cache}" >&2
         return 1
-    fi
+    }
 
     chmod -R u+w "${dest}"
     echo "${dest}"
@@ -161,14 +157,7 @@ reset_kernel_source_from_tarball() {
         rm -rf "${dest}"
     fi
 
-    if ! extract_kernel_tarball "${tar}" "${CACHE_DIR}" "${ver}" >/dev/null; then
-        echo "ERROR: could not re-extract linux-${ver}" >&2
-        return 1
-    fi
-}
-
-kernel_tarball_url() {
-    kernel_tarball_urls "$1" | head -1
+    extract_kernel_tarball "${tar}" "${CACHE_DIR}" "${ver}" >/dev/null
 }
 
 kernel_source_cached() {
@@ -177,7 +166,7 @@ kernel_source_cached() {
 }
 
 kernel_tarball_exists() {
-    local ver="$1" url tar
+    local ver="$1" url
     kernel_source_cached "${ver}" && return 0
     while IFS= read -r url; do
         [[ -n "${url}" ]] || continue
@@ -229,14 +218,12 @@ kernel_releases_list_versions() {
     [[ -n "${json}" && -f "${json}" ]] || return 0
     python3 - "${json}" <<'PY'
 import json, sys
-path = sys.argv[1]
-with open(path, encoding="utf-8") as f:
+with open(sys.argv[1], encoding="utf-8") as f:
     data = json.load(f)
 versions = []
-for key in ("latest_stable",):
-    item = data.get(key)
-    if isinstance(item, dict) and item.get("version"):
-        versions.append(item["version"])
+item = data.get("latest_stable")
+if isinstance(item, dict) and item.get("version"):
+    versions.append(item["version"])
 for item in data.get("releases") or []:
     v = item.get("version") if isinstance(item, dict) else None
     if v:
@@ -257,7 +244,6 @@ kernel_cached_versions() {
     done
 }
 
-# Menu candidates: CDN + releases.json + fallback + cache (no per-version HEAD).
 kernel_list_versions_for_series() {
     local series="$1" ver
     local -a found=()
@@ -282,6 +268,5 @@ kernel_list_versions_for_series() {
     done < <(kernel_cached_versions 2>/dev/null || true)
 
     [[ ${#found[@]} -eq 0 ]] && return 0
-
     printf '%s\n' "${found[@]}" | sort -rVu
 }

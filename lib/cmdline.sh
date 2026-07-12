@@ -143,18 +143,20 @@ build_abl_cmdline() {
         return 1
     }
 
+    # Match working LinuxLoader 6.18.8 baseline (no video=efifb:off — causes blue panel without HDMI).
     local -a parts=(
-        "root=UUID=${uuid}"
         "clk_ignore_unused"
         "pd_ignore_unused"
         "quiet"
         "rw"
         "rootwait"
-        "psi=0"
-        "arm64.nopauth"
-        "efi=noruntime"
-        "video=efifb:off"
+        "root=UUID=${uuid}"
     )
+
+    # Optional extras for legacy ABL — off by default (see docs/DISPLAY-BOOT.md).
+    if [[ "${ABL_CMDLINE_EXTRAS:-0}" == "1" ]]; then
+        parts+=("psi=0" "arm64.nopauth" "efi=noruntime" "video=efifb:off")
+    fi
 
     if [[ -n "${KERNEL_CMDLINE_EXTRA:-}" ]]; then
         local extra

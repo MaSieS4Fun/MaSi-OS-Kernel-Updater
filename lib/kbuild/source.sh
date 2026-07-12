@@ -37,11 +37,10 @@ download_kernel_source() {
         rm -f "${tar}.partial"
     done < <(kernel_tarball_urls "${ver}")
 
-    if [[ "${ok}" != "1" ]]; then
+    [[ "${ok}" == "1" ]] || {
         echo "Error: could not download linux-${ver} (CDN + GitHub gregkh/linux)" >&2
-        echo "  Pick another version in the menu or check network/proxy." >&2
         return 1
-    fi
+    }
 
     echo "==> Extracting linux-${ver}" >&2
     src_dir="$(extract_kernel_tarball "${tar}" "${CACHE_DIR}" "${ver}")" || return 1
@@ -61,28 +60,64 @@ fetch_armbian_defconfig() {
 
 fetch_armbian_patches() {
     local patch_set="$1" dest="${PATCH_CACHE}/${patch_set}"
-    local api="https://api.github.com/repos/armbian/build/contents/patch/kernel/archive/${patch_set}"
+    local names name raw_url
 
-    if [[ -d "${dest}" && -n "$(ls -A "${dest}"/*.patch 2>/dev/null)" ]]; then
-        echo "${dest}"
-        return 0
-    fi
-
-    echo "==> Downloading patches ${patch_set}" >&2
     mkdir -p "${dest}"
 
-    local names name
-    names="$(curl -fsSL --max-time 60 "${api}" | python3 -c "
-import sys, json
-for item in sorted(json.load(sys.stdin), key=lambda x: x['name']):
-    if item['name'].endswith('.patch'):
-        print(item['name'])
-")"
+    names="$(_armbian_resolve_patch_names "${patch_set}" "${dest}")" || {
+        echo "ERROR: could not resolve patch list for ${patch_set}" >&2
+        echo "  Tip: rm -rf ${dest} .cache/armbian-build-ref and re-run ./make.sh" >&2
+        return 1
+    }
 
-    for name in ${names}; do
-        curl -fsSL --max-time 60 \
-            "${ARMBIAN_PATCH_RAW}/patch/kernel/archive/${patch_set}/${name}" \
-            -o "${dest}/${name}"
-    done
+    [[ -n "${names}" ]] || {
+        echo "ERROR: patch set ${patch_set} is empty" >&2
+        return 1
+    }
+
+    local -a expected=() missing=()
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        expected+=("${name}")
+        [[ -f "${dest}/${name}" ]] || missing+=("${name}")
+    done <<< "${names}"
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        if [[ ${#missing[@]} -eq ${#expected[@]} ]]; then
+            echo "==> Downloading patches ${patch_set} (${#expected[@]} files via raw.githubusercontent.com)" >&2
+        else
+            echo "==> Syncing ${#missing[@]} missing patch(es) for ${patch_set}" >&2
+        fi
+        local dl_fail=0 name
+        for name in "${missing[@]}"; do
+            raw_url="${ARMBIAN_PATCH_RAW}/patch/kernel/archive/${patch_set}/${name}"
+            if curl -fsSL --connect-timeout 15 --max-time 180 \
+                -A "MaSi-OS-Kernel-Updater" \
+                -o "${dest}/${name}.partial" "${raw_url}" \
+                && [[ -s "${dest}/${name}.partial" ]]; then
+                mv "${dest}/${name}.partial" "${dest}/${name}"
+            else
+                rm -f "${dest}/${name}.partial"
+                dl_fail=1
+            fi
+        done
+        if [[ "${dl_fail}" -eq 1 ]]; then
+            echo "  raw download failed; trying git sparse checkout..." >&2
+            _armbian_patch_names_from_git_sparse "${patch_set}" "${dest}" >/dev/null || {
+                echo "ERROR: could not download ${patch_set} patches (API/raw/git)" >&2
+                return 1
+            }
+        fi
+    fi
+
+    shopt -s nullglob
+    local -a patches=("${dest}"/*.patch)
+    shopt -u nullglob
+    [[ ${#patches[@]} -ge ${#expected[@]} ]] || {
+        echo "ERROR: patch cache incomplete for ${patch_set} (${#patches[@]}/${#expected[@]} in ${dest})" >&2
+        echo "  Tip: rm -rf ${dest} and re-run ./make.sh" >&2
+        return 1
+    }
+
     echo "${dest}"
 }

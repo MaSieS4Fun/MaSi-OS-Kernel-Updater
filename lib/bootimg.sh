@@ -13,6 +13,15 @@ copy_bootimg_hw_template() {
         echo "Missing bootimg template: ${template}" >&2
         return 1
     }
+
+    if [[ "${template}" == *.cfg || "${template}" == *.hw.cfg ]]; then
+        grep -E '^(bootsize|pagesize|kerneladdr|ramdiskaddr|secondaddr|tagsaddr|name) ' \
+            "${template}" > "${dest_cfg}" 2>/dev/null || cp -f "${template}" "${dest_cfg}"
+        echo 'cmdline = PLACEHOLDER' >> "${dest_cfg}"
+        echo "  bootimg template: $(basename "${template}")" >&2
+        return 0
+    fi
+
     command -v abootimg >/dev/null 2>&1 || {
         echo "Install: sudo apt install abootimg" >&2
         return 1
@@ -40,28 +49,25 @@ resolve_bootimg_template() {
         echo "${BOOTIMG_TEMPLATE}"
         return 0
     fi
-    if [[ -f /boot/KERNEL ]]; then
-        echo "/boot/KERNEL"
+    if [[ -f "${ROOT}/config/bootimg.abl.cfg" ]]; then
+        echo "${ROOT}/config/bootimg.abl.cfg"
         return 0
     fi
-    for candidate in \
-        "${ROOT}/device-tree/reference/KERNEL" \
-        "${ROOT}/../Kernel-odin2/rocknix-boot-partition/KERNEL"; do
-        [[ -f "${candidate}" ]] && readlink -f "${candidate}" && return 0
-    done
     return 1
 }
 
 pack_bootimg_abl() {
     local out_dir="$1" release="${2:-}" uuid cmdline
-    local staging
+    local staging boot_dir zimage initrd cfg kernel_out template
+
+    out_dir="$(cd "${out_dir}" && pwd)"
     staging="$(resolve_build_staging_dir "${out_dir}" "${release}")"
-    local boot_dir="${out_dir}/boot"
-    local zimage="${staging}/zImage"
-    local initrd="${staging}/initrd.img-${release}"
-    local cfg="${staging}/bootimg.cfg"
-    local kernel_out="${boot_dir}/KERNEL"
-    local template
+    staging="$(cd "${staging}" && pwd)"
+    boot_dir="${out_dir}/boot"
+    zimage="${staging}/zImage"
+    initrd="${staging}/initrd.img-${release}"
+    cfg="${staging}/bootimg.cfg"
+    kernel_out="${boot_dir}/KERNEL"
 
     [[ -f "${zimage}" ]] || {
         echo "Missing ${zimage} — run dtb-chain first" >&2
@@ -82,11 +88,16 @@ pack_bootimg_abl() {
     cmdline="$(build_abl_cmdline "${uuid}")" || return 1
 
     template="$(resolve_bootimg_template)" || {
-        echo "No bootimg template (BOOTIMG_TEMPLATE or ROCKNIX KERNEL)" >&2
+        echo "No bootimg template (config/bootimg.abl.cfg)" >&2
         return 1
     }
 
     mkdir -p "${boot_dir}" "${staging}"
+    [[ -d "${boot_dir}" ]] || {
+        echo "ERROR: could not create ${boot_dir}" >&2
+        return 1
+    }
+
     copy_bootimg_hw_template "${template}" "${cfg}.hw"
 
     {
@@ -99,7 +110,9 @@ pack_bootimg_abl() {
     echo "==> ABL bootimg: zImage + initrd → boot/KERNEL" >&2
     echo "  cmdline: ${cmdline}" >&2
 
-    local ksize rsize max_boot need pagesize=4096
+    local ksize rsize max_boot need pagesize
+    pagesize="$(grep -E '^pagesize ' "${cfg}" | awk '{print $3}')"
+    pagesize="${pagesize:-2048}"
     ksize="$(stat -c%s "${zimage}")"
     rsize="$(stat -c%s "${initrd}")"
     max_boot="$(grep -E '^bootsize ' "${cfg}" | awk '{print $3}')"
@@ -108,14 +121,17 @@ pack_bootimg_abl() {
     if [[ "${need}" -gt "${max_boot}" ]]; then
         echo "ERROR: bootimg too large (${need} vs bootsize ${max_boot} bytes)" >&2
         echo "  zImage: ${ksize} bytes | initrd: ${rsize} bytes" >&2
-        echo "  initrd should be ~≤58 MB. Try INITRAMFS_PROFILE=gold" >&2
+        echo "  initrd too large for bootsize ${max_boot} — shrink initrd or raise bootsize in config/bootimg.abl.cfg" >&2
         return 1
     fi
 
-    abootimg --create "${kernel_out}" -f "${cfg}" -k "${zimage}" -r "${initrd}" || {
-        echo "ERROR: abootimg --create failed" >&2
+    if ! abootimg --create "${kernel_out}" -f "${cfg}" -k "${zimage}" -r "${initrd}"; then
+        echo "ERROR: abootimg --create failed for ${kernel_out}" >&2
+        echo "  zImage: ${zimage} ($([[ -f "${zimage}" ]] && echo OK || echo MISSING))" >&2
+        echo "  initrd: ${initrd} ($([[ -f "${initrd}" ]] && echo OK || echo MISSING))" >&2
+        echo "  cfg:    ${cfg} ($([[ -f "${cfg}" ]] && echo OK || echo MISSING))" >&2
         return 1
-    }
+    fi
 
     [[ -s "${kernel_out}" ]] || {
         echo "ERROR: ${kernel_out} empty after abootimg" >&2
@@ -131,6 +147,60 @@ pack_bootimg_abl() {
     write_output_install "${out_dir}" "${release}" "${uuid}"
 
     echo "  → ${kernel_out} ($(du -h "${kernel_out}" | cut -f1))" >&2
+    export MASI_BOOT_KERNEL="${kernel_out}"
+}
+
+# Repack boot/KERNEL with this device's root UUID + cmdline (fixes multi-device installs).
+repack_bootimg_local_uuid() {
+    local kernel_in="$1" kernel_out="${2:-$1}" release="${3:-}"
+    local work uuid cmdline cfg zimage initrd
+
+    [[ -f "${kernel_in}" ]] || return 1
+    command -v abootimg >/dev/null 2>&1 || {
+        echo "  repack: abootimg missing — installing KERNEL as-is" >&2
+        [[ "${kernel_in}" != "${kernel_out}" ]] && cp -f "${kernel_in}" "${kernel_out}"
+        return 0
+    }
+
+    resolve_root_uuid || return 1
+    uuid="${RESOLVED_ROOT_UUID}"
+
+    cmdline="$(build_abl_cmdline "${uuid}")" || return 1
+
+    work="$(mktemp -d)"
+    (
+        cd "${work}"
+        abootimg -x "${kernel_in}" >/dev/null 2>&1
+    ) || {
+        rm -rf "${work}"
+        echo "  repack: could not unpack ${kernel_in}" >&2
+        return 1
+    }
+
+    zimage="${work}/zImage"
+    initrd="${work}/initrd.img"
+    cfg="${work}/bootimg.cfg"
+    [[ -f "${zimage}" && -f "${initrd}" && -f "${cfg}" ]] || {
+        rm -rf "${work}"
+        echo "  repack: missing zImage/initrd in bootimg" >&2
+        return 1
+    }
+
+    {
+        grep -E '^(bootsize|pagesize|kerneladdr|ramdiskaddr|secondaddr|tagsaddr|name) ' "${cfg}"
+        printf 'cmdline = %s\n' "${cmdline}"
+    } > "${cfg}.new"
+    mv -f "${cfg}.new" "${cfg}"
+
+    mkdir -p "$(dirname "${kernel_out}")"
+    abootimg --create "${kernel_out}" -f "${cfg}" -k "${zimage}" -r "${initrd}" || {
+        rm -rf "${work}"
+        return 1
+    }
+    rm -rf "${work}"
+
+    echo "  repack KERNEL: root UUID ${uuid} (this device)" >&2
+    echo "  cmdline: ${cmdline}" >&2
     export MASI_BOOT_KERNEL="${kernel_out}"
 }
 

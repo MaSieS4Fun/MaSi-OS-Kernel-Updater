@@ -8,7 +8,7 @@ ui_banner() {
     clear
     echo "============================================================"
     echo "  Kernel_MaSi-OS — SM8550 gaming + ABL bootimg"
-    echo "  golden.config | 11 DTBs | initrd gold/efi-clean"
+    echo "  golden.config | 11 DTBs | initrd efi-clean"
     echo "============================================================"
     echo ""
 }
@@ -79,6 +79,7 @@ ui_select_kernel() {
     local host_ver
     host_ver="$(uname -r 2>/dev/null | cut -d- -f1 || true)"
 
+    refresh_armbian_support
     echo "Armbian SM8550 series: $(armbian_support_summary)" >&2
     echo "Querying kernel.org (releases + CDN; may take a few seconds)..." >&2
 
@@ -87,25 +88,24 @@ ui_select_kernel() {
         versions+=("${ver}")
         patch="$(patch_set_for_version "${ver}" 2>/dev/null || echo "?")"
         if kernel_source_cached "${ver}"; then
-            labels+=("linux-${ver}  [${patch}]  (local cache)")
+            labels+=("linux-${ver} [${patch}] (local cache)")
         elif [[ -n "${host_ver}" && "${ver}" == "${host_ver}" ]]; then
-            labels+=("linux-${ver}  [${patch}]  (running kernel)")
+            labels+=("linux-${ver} [${patch}] (running kernel)")
         else
-            labels+=("linux-${ver}  [${patch}]")
+            labels+=("linux-${ver} [${patch}]")
         fi
     done < <(enumerate_kernel_menu_versions)
 
-    if [[ ${#versions[@]} -eq 0 ]]; then
-        echo "No compatible versions (Armbian/kernel.org unreachable)." >&2
+    [[ ${#versions[@]} -gt 0 ]] || {
+        echo "No compatible versions — only kernels with a published Armbian sm8550-<series> patch set are listed." >&2
         echo "Try: KERNEL_VER=7.0.14 ./make.sh" >&2
         return 1
-    fi
+    }
 
     ui_menu "Step 1/2 — Kernel version" \
         "Choose version to build (Armbian patch set in brackets):" \
         "${labels[@]}" || return 1
 
-    # UI_MENU_RESULT is the label; recover version by index
     local i pick="${UI_MENU_RESULT}"
     for i in "${!labels[@]}"; do
         [[ "${labels[$i]}" == "${pick}" ]] && {
@@ -126,13 +126,13 @@ ui_select_kernel() {
 ui_confirm_build() {
     local ver="$1" patch_set="$2"
     local msg
-    msg="Kernel:     linux-${ver}
-Patches:    ${patch_set}
-Config:     golden.config + gaming tuning
-Initrd:     ${INITRAMFS_PROFILE:-gold}
-DTBs:       ABL chain, 11 devices
-Output:     ${OUTPUT_DIR}/${ver}${KERNEL_LOCALVERSION}-${OUTPUT_SUFFIX:-masi}/
-Jobs:       ${JOBS}
+    msg="Kernel: linux-${ver}
+Patches: ${patch_set}
+Config: golden.config + gaming tuning
+Initrd: ${INITRAMFS_PROFILE:-efi-clean}
+DTBs: ABL chain, 11 devices
+Output: ${OUTPUT_DIR}/${ver}${KERNEL_LOCALVERSION}-${OUTPUT_SUFFIX:-masi}/
+Jobs: ${JOBS}
 
 Generates output/ only — install with sudo ./update.sh or INSTALL.txt."
 
@@ -159,11 +159,10 @@ ui_build_complete() {
     echo "  BUILD COMPLETE"
     echo "============================================================"
     echo "  ${out}/"
-    echo "    boot/KERNEL"
-    echo "    firmware/"
-    echo "    modules/"
+    echo "  boot/KERNEL"
+    echo "  firmware/"
+    echo "  modules/"
     echo ""
     echo "  Install: sudo ./update.sh"
-    echo "  Or see INSTALL.txt"
     echo ""
 }

@@ -37,10 +37,9 @@ verify_eas_in_dtsi() {
 resolve_dtb_targets() {
     local choice="${1:-all}"
     if [[ "${choice}" == "all" ]]; then
-        while IFS='|' read -r id dtb label; do
-            [[ -z "${id}" || "${id}" =~ ^# ]] && continue
-            echo "${dtb}"
-        done < "${ROOT}/config/devices.conf"
+        # shellcheck source=lib/dtb-chain/targets.sh
+        source "${ROOT}/lib/dtb-chain/targets.sh"
+        dtb_chain_all_compile_targets
         return 0
     fi
     while IFS='|' read -r id dtb label; do

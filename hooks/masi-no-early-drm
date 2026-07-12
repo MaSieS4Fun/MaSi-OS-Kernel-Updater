@@ -15,4 +15,4 @@ find "${local_mod}" -type f \( \
     -name '*hdmi*.ko*' -o \
     -name 'gpucpower*.ko*' -o \
     -name 'kgsl*.ko*' \
-    \) -print -delete 2>/dev/null || true
+\) -print -delete 2>/dev/null || true

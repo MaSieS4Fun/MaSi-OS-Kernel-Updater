@@ -24,6 +24,8 @@ source "${ROOT}/config/defaults.conf"
 source "${ROOT}/lib/kernel-org.sh"
 # shellcheck source=lib/armbian-support.sh
 source "${ROOT}/lib/armbian-support.sh"
+# shellcheck source=lib/armbian-patch-sync.sh
+source "${ROOT}/lib/armbian-patch-sync.sh"
 # shellcheck source=lib/kbuild/source.sh
 source "${ROOT}/lib/kbuild/source.sh"
 # shellcheck source=lib/kbuild/patches.sh
@@ -52,7 +54,7 @@ die()  { log "ERROR: $*"; exit 1; }
 
 check_build_deps() {
     local miss=() pkg
-    for pkg in curl patch bc bison flex make gcc; do
+    for pkg in curl patch bc bison flex make gcc dtc git; do
         command -v "${pkg}" >/dev/null 2>&1 || miss+=("${pkg}")
     done
     dpkg -s libssl-dev libncurses-dev libelf-dev >/dev/null 2>&1 || {
@@ -105,6 +107,8 @@ kbuild_main() {
     resolve_kernel_for_build
     kernel_ver="${KERNEL_VER}"
     patch_set="$(patch_set_for_version "${kernel_ver}")" || exit 1
+    _patch_set_matches_kernel_series "${kernel_ver}" "${patch_set}" || \
+        die "Refusing linux-${kernel_ver} with ${patch_set} (requires sm8550-$(kernel_major_minor "${kernel_ver}"))."
     release="${kernel_ver}${KERNEL_LOCALVERSION}"
     out_suffix="${OUTPUT_SUFFIX:-masi}"
     BUILD_OUT_DIR="${OUTPUT_DIR}/${release}-${out_suffix}"
@@ -141,11 +145,17 @@ kbuild_main() {
         build_initramfs_masi "${BUILD_OUT_DIR}" "${BUILD_RELEASE}" || exit 1
     fi
 
+    finalize_output_layout "${BUILD_OUT_DIR}" "${BUILD_RELEASE}"
+
     if [[ "${BUILD_BOOTIMG:-1}" == "1" ]]; then
         pack_bootimg_abl "${BUILD_OUT_DIR}" "${BUILD_RELEASE}" || exit 1
     fi
 
     finalize_output_layout "${BUILD_OUT_DIR}" "${BUILD_RELEASE}"
+
+    # shellcheck source=lib/verify-build.sh
+    source "${ROOT}/lib/verify-build.sh"
+    verify_build_output "${BUILD_OUT_DIR}" "${BUILD_RELEASE}" || exit 1
 
     log "DONE: ${BUILD_OUT_DIR}"
     log "  boot:     ${BUILD_OUT_DIR}/boot/KERNEL"

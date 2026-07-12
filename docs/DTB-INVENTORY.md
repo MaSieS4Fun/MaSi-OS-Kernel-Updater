@@ -1,7 +1,6 @@
-# DTB inventory — ROCKNIX multidevice chain
+# DTB inventory — ABL multidevice chain
 
-Reference analysis (`rocknix-boot-partition/KERNEL`, ROCKNIX 7.0.11).  
-MaSi-OS builds integrate its own DTBs; ROCKNIX is only used to validate order and checksums.
+MaSi-OS builds all 11 chain slots from **public kernel sources** (no extract from other Linux images).
 
 ## ABL zImage format
 
@@ -9,32 +8,20 @@ MaSi-OS builds integrate its own DTBs; ROCKNIX is only used to validate order an
 zImage = gzip(Image) + chain of 11 concatenated DTBs
 ```
 
-ABL picks the DTB by hardware (multidevice without reflashing ABL).
+ABL + stored device setting pick the correct DTB.
 
-## 11 detected slots
+## Slot map (see `config/dtb-chain.map`)
 
-| Slot | Size | Device / hint |
-|------|------|---------------|
-| 00 | 176793 | `qcom,qcs8550` |
-| 01 | 176534 | `qcom,qcs8550` |
-| 02 | 178818 | `qcom,qcs8550` |
-| 03 | 176223 | `qcom,qcs8550` |
-| 04 | 177169 | generic base |
-| 05 | 188388 | `ayn,odin2` |
-| 06 | 186404 | `ayn,odin2mini` |
-| 07 | 189886 | `ayn,odin2portal` |
-| 08 | 192261 | `ayn,thor` |
-| 09 | 191012 | `retroidpocket,rp6` |
-| 10 | 190962 | `retroidpocket,rp6` (variant) |
+| Slot | kbuild DTB | Hint |
+|------|------------|------|
+| 00, 05 | `qcs8550-ayn-odin2.dtb` | `ayn,odin2` |
+| 01, 06, 10 | `qcs8550-ayn-odin2mini.dtb` | `ayn,odin2mini` |
+| 02, 07 | `qcs8550-ayn-odin2portal.dtb` | `ayn,odin2portal` |
+| 03, 08 | `qcs8550-ayn-thor.dtb` | `ayn,thor` |
+| 04, 09 | `qcs8550-retroidpocket-rp6.dtb` | `retroidpocket,rp6` |
 
-Slots 0–4: Qualcomm base DTBs. Slots 5–10: AYN / Retroid profiles.
+**Not used:** `qcs8550-aim300-aiot.dtb` (generic reference board — causes wrong DTB on AYN handhelds).
 
-## Commands
+RP6 DTS: `patches/masi/` (from public LineageOS kernel-ack, adapted for Armbian).
 
-```bash
-./scripts/vendor-dtb-chain.sh /path/to/ROCKNIX/KERNEL   # once
-./make.sh   # generates .build/.../zImage with 11 DTBs
-```
-
-Slot map: `config/dtb-chain.map`  
-ABL boot (not EFI): [DTB-ABL.md](DTB-ABL.md)
+See [DTB-ABL.md](DTB-ABL.md).

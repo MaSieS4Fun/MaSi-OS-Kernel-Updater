@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gzip(Image) + DTB chain — ROCKNIX/ABL layout (no EFI devicetree)
+# gzip(Image) + DTB chain — ABL layout (no EFI devicetree)
 set -euo pipefail
 
 count_dtbs_in_zimage() {
@@ -48,7 +48,7 @@ build_zimage_abl() {
         return 1
     }
 
-    echo "==> ABL zImage: gzip(Image) + ${#dtbs[@]} DTBs (ABL selection, not EFI)..." >&2
+    echo "==> ABL zImage: gzip(Image) + ${#dtbs[@]} DTBs..." >&2
     rm -f "${tmp}" "${dest_zimage}"
     gzip -c -n "${image}" > "${tmp}"
     for dtb in "${dtbs[@]}"; do

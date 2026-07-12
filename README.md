@@ -1,6 +1,6 @@
 # MaSi-OS Kernel Updater
 
-Build and install a **performance-tuned** Linux kernel for Qualcomm **SM8550** handhelds (AYN Odin 2, Mini, Portal, Thor, Retroid Pocket 6, …) on **Armbian**, packaged as an ABL **`boot/KERNEL`** bootimg — same format used by ROCKNIX multidevice images.
+Build and install a **performance-tuned** Linux kernel for Qualcomm **SM8550** handhelds (AYN Odin 2, Mini, Portal, Thor, Retroid Pocket 6, …) on **Armbian**, packaged as an ABL **`boot/KERNEL`** bootimg.
 
 Repository: **https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater**
 
@@ -9,9 +9,12 @@ Repository: **https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater**
 ## Features
 
 - Recompiles kernel with **`config/golden.config`** (gaming scheduler, storage, PSI off)
-- **11-DTB ABL chain** — one `KERNEL` bootimg for multiple devices
-- **Gaming cmdline** — no `irqaffinity=0-2`; `psi=0`
-- Small **gold initrd** (~47 MB) that fits ABL size limits
+- **11-DTB ABL chain** — all slots compiled from kernel source
+- **Firmware** — downloaded from public Armbian firmware git
+- **Initrd** — built locally (`efi-clean`); no copy from other images
+- **Gaming cmdline** — matches working LinuxLoader 6.18.8 (no `video=efifb:off` by default)
+- **Cmdline UUID** — from `/boot/LinuxLoader.cfg` or `/boot/KERNEL` on the system
+- **Initrd** — built locally (`efi-clean`); optional `INITRAMFS_PROFILE=gold` uses `reference/` only
 - **`update.sh`** — backup, clean install to `/boot`, firmware, modules, optional reboot
 
 ---
@@ -20,50 +23,38 @@ Repository: **https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater**
 
 | Device | Notes |
 |--------|--------|
-| AYN Odin 2 / Mini / Portal / Thor | kbuild DTBs in slots 5–8 |
-| Retroid Pocket 6 | reference DTBs in slots 9–10 |
-| Other SM8550 ABL handhelds | same bootimg format if DTB chain matches |
+| AYN Odin 2 / Mini / Portal / Thor | slots 0–3 (+ alts); set **ABL → device model** |
+| Retroid Pocket 6 | slots 4 / 9 (`patches/masi/`) |
 
-ABL picks the DTB automatically — do **not** use `devicetree=` in cmdline.
+In ROCKNIX-ABL: **Set the Device** to your exact model (Mini ≠ Odin 2). Do **not** use `devicetree=` in cmdline.
 
 ---
 
-## Quick start
+## Autonomous build (no other Linux image required)
 
-### Fresh clone on your handheld (Armbian SM8550)
+| Component | Public source |
+|-----------|----------------|
+| Kernel | [kernel.org](https://kernel.org) CDN |
+| Patches | [Armbian build](https://github.com/armbian/build) + `patches/masi/` (RP6 DTS) |
+| DTBs | Compiled from kernel (`config/dtb-chain.map`) |
+| Firmware | [armbian/firmware](https://github.com/armbian/firmware) git (`FIRMWARE_SOURCE=download`) |
+| Initrd | Built with `mkinitramfs` (`INITRAMFS_PROFILE=efi-clean`) |
+| Bootimg layout | `config/bootimg.abl.cfg` (in repo) |
+| Root UUID | **`/boot/LinuxLoader.cfg`** or **`/boot/KERNEL`** on the system you update |
 
-Works on **any** supported device if you already boot Armbian with an ABL `KERNEL` on `/boot`:
+Fresh clone on a handheld with your preconfigured `/boot/`:
 
 ```bash
 git clone https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater.git
 cd MaSi-OS-Kernel-Updater
-
 sudo apt install build-essential libssl-dev libncurses-dev libelf-dev \
-  flex bison bc curl patch initramfs-tools abootimg python3 u-boot-tools git
-
-./scripts/first-run.sh    # optional — caches DTB + initrd from /boot
+  flex bison bc curl patch initramfs-tools abootimg python3 u-boot-tools \
+  git device-tree-compiler
 ./make.sh
 sudo ./update.sh
 ```
 
-**Automatic on first build (no extra steps required on device):**
-
-| Need | Source on your handheld |
-|------|-------------------------|
-| `root=UUID=` for cmdline | `/boot/LinuxLoader.cfg` if present, else `/boot/KERNEL` |
-| DTB chain slots 0–4, 9–10 | Extracted from `/boot/KERNEL` |
-| Initrd gold | `/boot/initrd.img-*` copied to `reference/` |
-| Initrd fallback | Small `efi-clean` initrd (no firmware inside) |
-| Firmware in output | Copied from `/usr/lib/firmware` on host |
-
-**One-time manual step** only if you build **off-device** (PC without `/boot/KERNEL`):
-
-```bash
-./scripts/vendor-dtb-chain.sh /path/to/any/SM8550/KERNEL
-./scripts/setup-reference-initrd.sh /path/to/initrd.img
-```
-
-Check before build: `./lib/preflight.sh`
+No ROCKNIX, ARMADA, or ostree image needed for the build itself.
 
 ### Requirements
 
@@ -74,15 +65,17 @@ sudo apt install build-essential libssl-dev libncurses-dev libelf-dev \
   flex bison bc curl patch initramfs-tools abootimg python3 u-boot-tools git
 ```
 
-You need an existing **`/boot/KERNEL`** on the build device (normal on Armbian ABL installs).
+You need **`/boot/LinuxLoader.cfg`** or **`/boot/KERNEL`** on the device (for `root=UUID=` only — not for DTBs/firmware/initrd).
 
 ### Build (after requirements)
 
 ```bash
-./make.sh                              # interactive version menu
+./make.sh                              # interactive version menu (only kernels with Armbian sm8550-* patches)
 KERNEL_VER=7.0.14 ./make.sh            # non-interactive
 KERNEL_VER=7.0.14 BUILD_COMPILE=0 ./make.sh   # repack only (no recompile)
 ```
+
+**linux-7.1.x** appears in the menu only when Armbian publishes **`sm8550-7.1`** (no cross-series fallback to `sm8550-7.0`).
 
 ### Install
 
@@ -130,6 +123,7 @@ Defaults live in `config/defaults.conf`. Copy `config/defaults.conf.example` →
 | `GAMING_TUNING` | `1` | Golden kconfig overrides |
 | `INITRAMFS_PROFILE` | `gold` | Small initrd for ABL |
 | `KERNEL_LOCALVERSION` | `-edge-sm8550` | Module directory name |
+| `PATCH_POLICY` | `strict` | `tolerant` = ignore patch failures (not recommended) |
 | `BUILD_COMPILE` | `1` | `0` = repack only |
 
 ---
@@ -138,7 +132,8 @@ Defaults live in `config/defaults.conf`. Copy `config/defaults.conf.example` →
 
 | Doc | Topic |
 |-----|--------|
-| [GAMING-PERFORMANCE.md](docs/GAMING-PERFORMANCE.md) | Standard vs performance; golden config & initrd reference |
+| [GAMING-PERFORMANCE.md](docs/GAMING-PERFORMANCE.md) | Standard vs performance; golden config & initrd |
+| [DISPLAY-BOOT.md](docs/DISPLAY-BOOT.md) | Blue/black screen, ROCKNIX ABL, UUID per device |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Build pipeline |
 | [DTB-ABL.md](docs/DTB-ABL.md) | Multidevice ABL boot |
 | [GITHUB-SETUP.md](docs/GITHUB-SETUP.md) | Publish or push updates to GitHub |

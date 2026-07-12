@@ -1,16 +1,25 @@
-# ABL multidevice DTB chain (11 slots) — fixed ROCKNIX order.
-# source=reference  → slot extracted from ROCKNIX KERNEL (cache or vendored)
-# source=kbuild     → DTB built in .staging/dtbs/ (overlay on reference)
+# ABL DTB chain — ARMADA / ROCKNIX slot order (from armada-boot-partition/KERNEL).
 #
-# SLOT|SOURCE|KBUILD_DTB|DEVICE
-0|reference||base
-1|reference||base
-2|reference||base
-3|reference||base
-4|reference||base
-5|kbuild|qcs8550-ayn-odin2.dtb|odin2
-6|kbuild|qcs8550-ayn-odin2mini.dtb|mini
-7|kbuild|qcs8550-ayn-odin2portal.dtb|portal
-8|kbuild|qcs8550-ayn-thor.dtb|thor
-9|reference||rp6
-10|reference||rp6-alt
+# ROCKNIX-ABL picks chain[index] for the stored device model. MaSi used the wrong
+# permutation (0=Odin2, 1=Mini, 2=Portal…) — ARMADA uses:
+#   1=Portal, 2=Odin2, 3=Mini, 4=Thor, 5–6=RP6
+# Slot 0 = other SoC (Odin3) in ARMADA; kept as reference blob for index alignment.
+# Slots 7–8 = other handhelds; 9–12 = qcom,qcs8550 generic fallbacks.
+#
+# Extract reference blobs once: ./scripts/extract-armada-dtb-chain.sh
+#
+# SLOT|SOURCE|FILE|DEVICE
+0|reference|slot-00.dtb|slot0-ref
+1|kbuild|qcs8550-ayn-odin2portal.dtb|portal
+2|kbuild|qcs8550-ayn-odin2.dtb|odin2
+3|kbuild|qcs8550-ayn-odin2mini.dtb|mini
+4|kbuild|qcs8550-ayn-thor.dtb|thor
+5|kbuild|qcs8550-retroidpocket-rp6.dtb|rp6
+6|kbuild|qcs8550-retroidpocket-rp6.dtb|rp6-alt
+7|reference|slot-07.dtb|slot7-ref
+8|reference|slot-08.dtb|slot8-ref
+9|reference|slot-09.dtb|qcom-generic
+10|reference|slot-10.dtb|qcom-generic2
+11|reference|slot-11.dtb|qcom-generic3
+12|reference|slot-12.dtb|qcom-generic4
+13|reference|slot-13.dtb|generic-tail

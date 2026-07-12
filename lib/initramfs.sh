@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# lib/initramfs.sh — initrd for ABL bootimg (gold ref or minimal mkinitramfs)
+# lib/initramfs.sh — initrd for ABL bootimg (efi-clean or optional gold ref)
 #
 set -euo pipefail
 
@@ -11,7 +11,6 @@ _initrd_try_ref() {
     return 0
 }
 
-# Cache /boot initrd into reference/ for reproducible gold builds.
 _initrd_cache_reference() {
     local src="$1"
     local dest_dir="${ROOT}/reference"
@@ -30,7 +29,6 @@ _initrd_cache_reference() {
     echo "${dest}"
 }
 
-# Prefer reference/ copy; fall back to the source path if cache is not writable.
 _initrd_use_or_cache() {
     local src="$1" cached
 
@@ -50,7 +48,6 @@ _initrd_use_or_cache() {
     echo "${src}"
 }
 
-# Extract initrd from an ABL bootimg (e.g. /boot/KERNEL).
 _extract_initrd_from_bootimg() {
     local kernel="$1" work="${CACHE_DIR:-/tmp}/initrd-from-bootimg-$$"
 
@@ -80,7 +77,6 @@ resolve_gold_initrd_ref() {
     for candidate in \
         "${GOLD_INITRD_REF:-}" \
         "${ROOT}/reference/initrd.img-${ver}" \
-        "${ROOT}/device-tree/reference/initrd.img-${ver}" \
         "/boot/initrd.img-${ver}"; do
         _initrd_try_ref "${candidate}" && return 0
     done
@@ -94,28 +90,19 @@ resolve_gold_initrd_ref() {
     fi
 
     shopt -s nullglob
-    for candidate in "${ROOT}/reference"/initrd.img-*; do
+    for candidate in \
+        "${ROOT}/reference"/initrd.img-* \
+        /boot/initrd.img-*edge-sm8550* \
+        /boot/initrd.img-*; do
         _initrd_try_ref "${candidate}" && {
-            echo "  gold: using ${candidate} (no exact initrd.img-${ver})" >&2
+            echo "  gold: using ${candidate}" >&2
             shopt -u nullglob
             return 0
         }
     done
-
-    for candidate in \
-        "/boot/initrd.img-${ver}" \
-        /boot/initrd.img-*edge-sm8550* \
-        /boot/initrd.img-*; do
-        [[ -f "${candidate}" ]] || continue
-        shopt -u nullglob
-        _initrd_use_or_cache "${candidate}"
-        return 0
-    done
     shopt -u nullglob
 
-    for bootimg in \
-        "${BOOT_KERNEL_PATH:-/boot/KERNEL}" \
-        /boot/KERNEL; do
+    for bootimg in "${BOOT_KERNEL_PATH:-/boot/KERNEL}" /boot/KERNEL; do
         [[ -f "${bootimg}" ]] || continue
         if candidate="$(_extract_initrd_from_bootimg "${bootimg}")"; then
             echo "  gold: initrd extracted from ${bootimg}" >&2
@@ -136,16 +123,121 @@ build_initramfs_gold() {
 
     ref="$(resolve_gold_initrd_ref "${release}")" || {
         echo "initramfs gold: no reference initrd found." >&2
-        echo "  Run: ./scripts/setup-reference-initrd.sh" >&2
-        echo "  Or:  GOLD_INITRD_REF=/path/to/initrd.img ./make.sh" >&2
+        echo "  Or: GOLD_INITRD_REF=/path/to/initrd.img ./make.sh" >&2
         return 1
     }
 
     mkdir -p "${staging}"
     cp -f "${ref}" "${initrd}"
+    _initrd_scrub_host_paths "${initrd}" || {
+        echo "initramfs gold: could not scrub host ROOT= from ${ref}" >&2
+        rm -f "${initrd}"
+        return 1
+    }
     size="$(du -h "${initrd}" | cut -f1)"
     echo "  initrd gold: $(basename "${ref}") → initrd.img-${release} (${size})" >&2
     export MASI_INITRD="${initrd}"
+}
+
+_initrd_max_bytes() {
+    local max_mb="${INITRD_MAX_MB:-150}"
+    echo $((max_mb * 1024 * 1024))
+}
+
+_initrd_scrub_host_paths() {
+    local initrd="$1"
+    local work="${CACHE_DIR:-/tmp}/initrd-scrub-$$"
+    local cleaned="${initrd}.scrubbed"
+
+    command -v cpio >/dev/null 2>&1 || return 1
+    [[ -f "${initrd}" ]] || return 1
+
+    rm -rf "${work}"
+    mkdir -p "${work}/root"
+    (
+        cd "${work}/root"
+        if gzip -t "${initrd}" 2>/dev/null; then
+            gzip -dc "${initrd}"
+        else
+            cat "${initrd}"
+        fi | cpio -idm 2>/dev/null
+    ) || {
+        rm -rf "${work}"
+        return 1
+    }
+
+    # mkinitramfs -r <fake-root> and gold copies bake the build host path here.
+    # That breaks root=UUID= on every other device (Portal: "cannot find UUID").
+    rm -f "${work}/root/conf/conf.d/root"
+
+    (
+        cd "${work}/root"
+        find . -print0 | sort -z | cpio --null -o -H newc --owner 0:0 2>/dev/null
+    ) | gzip -9 > "${cleaned}" || {
+        rm -rf "${work}" "${cleaned}"
+        return 1
+    }
+
+    mv -f "${cleaned}" "${initrd}"
+    rm -rf "${work}"
+    echo "  initrd: removed conf/conf.d/root (use kernel cmdline root=UUID= only)" >&2
+}
+
+_initrd_repack_strip_bloat() {
+    local initrd="$1"
+    local work="${CACHE_DIR:-/tmp}/initrd-strip-$$"
+    local stripped="${initrd}.stripped"
+
+    command -v cpio >/dev/null 2>&1 || return 1
+
+    rm -rf "${work}"
+    mkdir -p "${work}/root"
+    (
+        cd "${work}/root"
+        if gzip -t "${initrd}" 2>/dev/null; then
+            gzip -dc "${initrd}"
+        else
+            cat "${initrd}"
+        fi | cpio -idm 2>/dev/null
+    ) || {
+        rm -rf "${work}"
+        return 1
+    }
+
+    rm -rf \
+        "${work}/root/lib/firmware" \
+        "${work}/root/usr/lib/firmware" \
+        "${work}/root/lib/modules"
+    find "${work}/root" -type f -name '*.ko*' -delete 2>/dev/null || true
+
+    (
+        cd "${work}/root"
+        find . -print0 | sort -z | cpio --null -o -H newc --owner 0:0 2>/dev/null
+    ) | gzip -9 > "${stripped}" || {
+        rm -rf "${work}" "${stripped}"
+        return 1
+    }
+
+    mv -f "${stripped}" "${initrd}"
+    rm -rf "${work}"
+}
+
+_try_initrd_gold() {
+    local out_dir="$1" release="$2"
+    local staging initrd max_bytes
+
+    staging="$(resolve_build_staging_dir "${out_dir}" "${release}")"
+    initrd="${staging}/initrd.img-${release}"
+    max_bytes="$(_initrd_max_bytes)"
+
+    build_initramfs_gold "${out_dir}" "${release}" 2>/dev/null || return 1
+    [[ -f "${initrd}" ]] || return 1
+    [[ "$(stat -c%s "${initrd}")" -le "${max_bytes}" ]] || {
+        echo "  gold initrd too large for ABL limit" >&2
+        rm -f "${initrd}"
+        return 1
+    }
+    return 0
 }
 
 _install_initramfs_hooks() {
@@ -190,7 +282,7 @@ EOF
             staging)
                 if [[ -d "${out_dir}/firmware" ]]; then
                     echo "${out_dir}/firmware" > "${mod_root}/etc/masi-firmware-staging"
-                    echo "  firmware initrd: staging (minimal hook paths)" >&2
+                    echo "  firmware initrd: staging" >&2
                 fi
                 ;;
             host|minimal)
@@ -218,12 +310,13 @@ build_initramfs_masi() {
     local staging mod_root initrd profile fw_mode
     local mkinitramfs_cmd="/usr/sbin/mkinitramfs"
     local modules_src="${out_dir}/modules/${release}"
-    local gold_fallback=0
+    local gold_fallback=0 max_bytes
 
     staging="$(resolve_build_staging_dir "${out_dir}" "${release}")"
     mod_root="${staging}/.initramfs-root"
-    profile="${INITRAMFS_PROFILE:-gold}"
-    fw_mode="${FIRMWARE_IN_INITRD:-minimal}"
+    profile="${INITRAMFS_PROFILE:-efi-clean}"
+    fw_mode="${FIRMWARE_IN_INITRD:-none}"
+    max_bytes="$(_initrd_max_bytes)"
 
     [[ -n "${release}" ]] || {
         echo "initramfs: missing release" >&2
@@ -232,13 +325,17 @@ build_initramfs_masi() {
 
     case "${profile}" in
         gold|gold-ref)
-            if build_initramfs_gold "${out_dir}" "${release}"; then
-                return 0
-            fi
-            echo "  gold unavailable — falling back to efi-clean (no firmware in initrd)" >&2
+            _try_initrd_gold "${out_dir}" "${release}" && return 0
+            echo "  gold unavailable — falling back to efi-clean" >&2
             profile="efi-clean"
             fw_mode="none"
             gold_fallback=1
+            ;;
+        efi-clean|minimal)
+            if [[ "${INITRAMFS_USE_GOLD:-0}" == "1" ]] && _try_initrd_gold "${out_dir}" "${release}"; then
+                return 0
+            fi
+            echo "  building minimal efi-clean initrd (INITRAMFS_USE_GOLD=0)" >&2
             ;;
     esac
 
@@ -259,14 +356,14 @@ build_initramfs_masi() {
             echo "initramfs full: missing ${modules_src}" >&2
             return 1
         }
+        _seed_modules_for_mkinitramfs "${mod_root}" "${modules_src}" "${release}"
+    else
+        mkdir -p "${mod_root}/lib/modules/${release}"
     fi
-
-    _seed_modules_for_mkinitramfs "${mod_root}" "${modules_src}" "${release}"
 
     echo "==> mkinitramfs ${release}..." >&2
-    if [[ "${gold_fallback}" -eq 1 ]]; then
+    [[ "${gold_fallback}" -eq 1 ]] && \
         echo "  (warnings about UUID fsck or /etc/shadow are usually harmless)" >&2
-    fi
 
     if command -v mkinitramfs >/dev/null 2>&1; then
         mkinitramfs -k "${release}" -r "${mod_root}" -o "${initrd}" 2>&1 | tail -12 >&2
@@ -280,32 +377,28 @@ build_initramfs_masi() {
     }
 
     rm -rf "${mod_root}"
-    local size ko max_mb="${INITRD_MAX_MB:-62}"
+
+    _initrd_scrub_host_paths "${initrd}" || {
+        echo "initramfs: scrub failed — refusing poisoned initrd" >&2
+        rm -f "${initrd}"
+        return 1
+    }
+
+    if [[ "${profile}" == "efi-clean" || "${profile}" == "minimal" ]]; then
+        _initrd_repack_strip_bloat "${initrd}" || true
+    fi
+
+    local size ko
     size="$(du -h "${initrd}" | cut -f1)"
     ko="$(lsinitramfs "${initrd}" 2>/dev/null | grep -c '\.ko$' || echo 0)"
     echo "  initrd.img-${release} (${size}, ${ko} .ko in cpio)" >&2
 
-    if [[ "$(stat -c%s "${initrd}")" -gt $((max_mb * 1024 * 1024)) ]]; then
-        echo "ERROR: initrd > ${max_mb} MB — does not fit ABL bootimg (~78 MB total)." >&2
-        echo "  Fix: ./scripts/setup-reference-initrd.sh   then INITRAMFS_PROFILE=gold ./make.sh" >&2
-        echo "  Or:  FIRMWARE_IN_INITRD=none INITRAMFS_PROFILE=efi-clean ./make.sh" >&2
+    if [[ "$(stat -c%s "${initrd}")" -gt "${max_bytes}" ]]; then
+        echo "ERROR: initrd > $((max_bytes / 1024 / 1024)) MB — does not fit ABL bootimg." >&2
+        echo "  Raise INITRD_MAX_MB or use INITRAMFS_PROFILE=efi-clean" >&2
+        rm -f "${initrd}"
         return 1
     fi
 
     export MASI_INITRD="${initrd}"
 }
-
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    export ROOT
-    # shellcheck source=config/defaults.conf
-    source "${ROOT}/config/defaults.conf"
-    # shellcheck source=lib/cmdline.sh
-    source "${ROOT}/lib/cmdline.sh"
-    # shellcheck source=lib/output.sh
-    source "${ROOT}/lib/output.sh"
-    out="$(find "${OUTPUT_DIR:-${ROOT}/output}" -maxdepth 1 -type d -name '*-masi' 2>/dev/null | sort -V | tail -1)"
-    [[ -n "${out}" ]] || { echo "No build output found"; exit 1; }
-    rel="$(basename "$(find "${out}/modules" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)")"
-    build_initramfs_masi "${out}" "${rel}"
-fi

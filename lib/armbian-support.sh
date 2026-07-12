@@ -2,7 +2,6 @@
 # Discover SM8550 kernel series supported by Armbian patches.
 set -euo pipefail
 
-ARMBIAN_FAMILY_CONF="${ARMBIAN_PATCH_RAW}/config/sources/families/sm8550.conf"
 ARMBIAN_ARCHIVE_API="https://api.github.com/repos/armbian/build/contents/patch/kernel/archive"
 ARMBIAN_SUPPORT_CACHE="${CACHE_DIR}/armbian-support.env"
 ARMBIAN_SUPPORT_TTL="${ARMBIAN_SUPPORT_TTL:-43200}"
@@ -10,13 +9,92 @@ ARMBIAN_SUPPORT_TTL="${ARMBIAN_SUPPORT_TTL:-43200}"
 declare -ga ARMBIAN_KERNEL_SERIES=()
 declare -gA ARMBIAN_SERIES_PATCH_SET=()
 declare -g ARMBIAN_EDGE_SERIES=""
+declare -g ARMBIAN_SUPPORT_MODE=""
 
-FALLBACK_KERNEL_SERIES=(7 7.0 6.18)
+# Offline fallback — only series with a 1:1 sm8550-<series> patch set (no cross-series).
+FALLBACK_KERNEL_SERIES=(7.0 6.18)
 declare -gA FALLBACK_SERIES_PATCH_SET=(
-    ["7"]="sm8550-7"
     ["7.0"]="sm8550-7.0"
     ["6.18"]="sm8550-6.18"
 )
+
+# Shown in menus when Armbian has not published the patch set yet.
+WITHHELD_KERNEL_SERIES=(7.1)
+
+_expected_patch_set_for_series() {
+    echo "sm8550-${1}"
+}
+
+_patch_set_matches_kernel_series() {
+    local ver="$1" ps="$2"
+    [[ "${ps}" == "$(_expected_patch_set_for_series "$(kernel_major_minor "${ver}")")" ]]
+}
+
+_kernel_series_is_listed() {
+    local series="$1" s
+    for s in "${ARMBIAN_KERNEL_SERIES[@]}"; do
+        [[ "${s}" == "${series}" ]] && return 0
+    done
+    return 1
+}
+
+_armbian_patch_set_published() {
+    local ps="$1" dir manifest
+    dir="${PATCH_CACHE:-${CACHE_DIR}/armbian-patches}/${ps}"
+
+    shopt -s nullglob
+    local -a cached=("${dir}"/*.patch)
+    shopt -u nullglob
+    [[ ${#cached[@]} -gt 0 ]] && return 0
+
+    manifest="${ROOT}/config/armbian-manifests/${ps}.txt"
+    [[ -f "${manifest}" ]] && return 0
+    return 1
+}
+
+_series_patch_mapping_valid() {
+    local series="$1" ps="${2:-}"
+    [[ -n "${ps}" ]] || return 1
+    [[ "${ps}" == "$(_expected_patch_set_for_series "${series}")" ]]
+}
+
+_filter_published_kernel_series() {
+    local trust_listed="${1:-0}"
+    local -a kept=()
+    local s ps
+
+    for s in "${ARMBIAN_KERNEL_SERIES[@]}"; do
+        ps="${ARMBIAN_SERIES_PATCH_SET[$s]:-}"
+        if ! _series_patch_mapping_valid "${s}" "${ps}"; then
+            echo "  skip ${s}.x: unexpected patch set ${ps:-<none>}" >&2
+            continue
+        fi
+        if [[ "${trust_listed}" == "1" || "${ARMBIAN_SUPPORT_MODE}" == "fallback" ]]; then
+            kept+=("${s}")
+            continue
+        fi
+        if _armbian_patch_set_published "${ps}"; then
+            kept+=("${s}")
+        else
+            echo "  skip ${s}.x: ${ps} not published on Armbian" >&2
+        fi
+    done
+
+    ARMBIAN_KERNEL_SERIES=("${kept[@]}")
+    [[ ${#ARMBIAN_KERNEL_SERIES[@]} -gt 0 ]] && ARMBIAN_EDGE_SERIES="${ARMBIAN_KERNEL_SERIES[0]}"
+}
+
+_log_withheld_kernel_series() {
+    local s ps
+    for s in "${WITHHELD_KERNEL_SERIES[@]}"; do
+        [[ -n "${s}" ]] || continue
+        if _kernel_series_is_listed "${s}"; then
+            continue
+        fi
+        ps="$(_expected_patch_set_for_series "${s}")"
+        echo "  withheld: linux-${s}.x until Armbian publishes ${ps}" >&2
+    done
+}
 
 _load_support_from_cache() {
     [[ -f "${ARMBIAN_SUPPORT_CACHE}" ]] || return 1
@@ -28,6 +106,7 @@ _load_support_from_cache() {
 _save_support_cache() {
     {
         echo "# Armbian SM8550 — $(date -Iseconds)"
+        echo "ARMBIAN_SUPPORT_MODE=\"${ARMBIAN_SUPPORT_MODE}\""
         echo "ARMBIAN_EDGE_SERIES=\"${ARMBIAN_EDGE_SERIES}\""
         echo -n "ARMBIAN_KERNEL_SERIES=("
         printf '%s ' "${ARMBIAN_KERNEL_SERIES[@]}"
@@ -41,7 +120,10 @@ _save_support_cache() {
 }
 
 _fetch_patch_sets_from_github() {
-    curl -fsSL --connect-timeout 15 --max-time 45 "${ARMBIAN_ARCHIVE_API}" \
+    curl -fsSL --connect-timeout 15 --max-time 45 \
+        -H "Accept: application/vnd.github+json" \
+        -H "User-Agent: MaSi-OS-Kernel-Updater" \
+        "${ARMBIAN_ARCHIVE_API}" \
         | python3 -c "
 import sys, json, re
 for item in sorted(json.load(sys.stdin), key=lambda x: x['name']):
@@ -58,9 +140,11 @@ _rebuild_patch_set_map_from_cache_vars() {
         key="ARMBIAN_SERIES_PATCH_SET_${s//./_}"
         ARMBIAN_SERIES_PATCH_SET["${s}"]="${!key:-sm8550-${s}}"
     done
+    _log_withheld_kernel_series
 }
 
 _use_fallback_support() {
+    ARMBIAN_SUPPORT_MODE="fallback"
     ARMBIAN_KERNEL_SERIES=("${FALLBACK_KERNEL_SERIES[@]}")
     ARMBIAN_SERIES_PATCH_SET=()
     local s
@@ -68,6 +152,8 @@ _use_fallback_support() {
         ARMBIAN_SERIES_PATCH_SET["${s}"]="${FALLBACK_SERIES_PATCH_SET[$s]}"
     done
     ARMBIAN_EDGE_SERIES="${FALLBACK_KERNEL_SERIES[0]}"
+    _filter_published_kernel_series
+    _log_withheld_kernel_series
     echo "  fallback: ${ARMBIAN_KERNEL_SERIES[*]}" >&2
 }
 
@@ -86,7 +172,7 @@ refresh_armbian_support() {
     local -a series=() patch_sets=() line mm ps
 
     while IFS= read -r line; do
-        [[ -z "${line}" ]] && continue
+        [[ -z "${line}" ]] || continue
         mm="${line%% *}"
         ps="${line#* }"
         series+=("${mm}")
@@ -95,15 +181,18 @@ refresh_armbian_support() {
         echo "WARNING: GitHub Armbian inaccesible." >&2
         _load_support_from_cache && return 0
         _use_fallback_support
+        _save_support_cache
         return 0
     }
 
     if [[ ${#series[@]} -eq 0 ]]; then
         _load_support_from_cache && return 0
         _use_fallback_support
+        _save_support_cache
         return 0
     fi
 
+    ARMBIAN_SUPPORT_MODE="github"
     ARMBIAN_KERNEL_SERIES=()
     ARMBIAN_SERIES_PATCH_SET=()
     local i
@@ -112,33 +201,47 @@ refresh_armbian_support() {
     done
     readarray -t ARMBIAN_KERNEL_SERIES < <(printf '%s\n' "${series[@]}" | sort -Vr)
     ARMBIAN_EDGE_SERIES="${ARMBIAN_KERNEL_SERIES[0]}"
+    _filter_published_kernel_series 1
+    _log_withheld_kernel_series
     _save_support_cache
-    echo "  series: ${ARMBIAN_KERNEL_SERIES[*]}" >&2
+    echo "  published: ${ARMBIAN_KERNEL_SERIES[*]}" >&2
 }
 
-_patch_set_keys_for_version() {
-    local ver="$1"
-    local mm="${ver%.*}"
-    local maj="${ver%%.*}"
-    if [[ "${mm}" == "${maj}" ]]; then
-        echo "${mm}"
-    else
-        printf '%s\n%s\n' "${mm}" "${maj}"
+unsupported_kernel_reason() {
+    local ver="$1" series ps expected
+    series="$(kernel_major_minor "${ver}")"
+    expected="$(_expected_patch_set_for_series "${series}")"
+    ps="${ARMBIAN_SERIES_PATCH_SET[$series]:-}"
+
+    if ! _kernel_series_is_listed "${series}"; then
+        echo "linux-${ver}: series ${series}.x is not in the supported Armbian SM8550 list (requires ${expected})."
+        return 0
     fi
+    if [[ -z "${ps}" ]]; then
+        echo "linux-${ver}: no Armbian SM8550 patch set mapped for ${series}.x (requires ${expected})."
+        return 0
+    fi
+    if [[ "${ps}" != "${expected}" ]]; then
+        echo "linux-${ver}: patch set ${ps} does not match ${expected}."
+        return 0
+    fi
+    echo "linux-${ver}: not supported."
 }
 
 patch_set_for_version() {
-    local ver="$1" key ps
-    while IFS= read -r key; do
-        [[ -n "${key}" ]] || continue
-        ps="${ARMBIAN_SERIES_PATCH_SET[$key]:-}"
-        if [[ -n "${ps}" ]]; then
-            echo "${ps}"
-            return 0
-        fi
-    done < <(_patch_set_keys_for_version "${ver}")
-    echo "No Armbian patches for linux-${ver}." >&2
-    return 1
+    local ver="$1" series ps
+    series="$(kernel_major_minor "${ver}")"
+    ps="${ARMBIAN_SERIES_PATCH_SET[$series]:-}"
+
+    if ! _kernel_series_is_listed "${series}"; then
+        unsupported_kernel_reason "${ver}" >&2
+        return 1
+    fi
+    if [[ -z "${ps}" ]] || ! _patch_set_matches_kernel_series "${ver}" "${ps}"; then
+        unsupported_kernel_reason "${ver}" >&2
+        return 1
+    fi
+    echo "${ps}"
 }
 
 kernel_is_supported() {
@@ -165,7 +268,6 @@ _try_kernel_version() {
     kernel_tarball_exists "${ver}"
 }
 
-# Interactive menu versions (no per-tarball CDN HEAD).
 enumerate_kernel_menu_versions() {
     local -a versions=()
     local series ver max per n
@@ -201,13 +303,11 @@ enumerate_kernel_menu_versions() {
 
     [[ ${#versions[@]} -gt 0 ]] || return 1
 
-    # sort -rV (not tac — tac uses /tmp and fails when tmpfs is full)
     while IFS= read -r ver; do
         [[ -n "${ver}" ]] && echo "${ver}"
     done < <(printf '%s\n' "${versions[@]}" | sort -rVu | head -n "${per}")
 }
 
-# Auto / no interactivo: preferir cache o tarball verificado.
 enumerate_downloadable_kernels() {
     local ver
     while IFS= read -r ver; do
@@ -219,7 +319,8 @@ enumerate_downloadable_kernels() {
 resolve_kernel_version() {
     if [[ -n "${KERNEL_VER:-}" ]]; then
         kernel_is_supported "${KERNEL_VER}" || {
-            echo "KERNEL_VER=${KERNEL_VER} not supported." >&2
+            unsupported_kernel_reason "${KERNEL_VER}" >&2
+            echo "  Only kernels with a matching Armbian sm8550-<series> patch set are allowed." >&2
             return 1
         }
         echo "${KERNEL_VER}"
@@ -234,7 +335,8 @@ resolve_kernel_version() {
     }
 
     ver="$(enumerate_kernel_menu_versions 2>/dev/null | head -1)" || {
-        echo "No compatible versions. Try KERNEL_VER=7.0.14 ./make.sh" >&2
+        echo "No compatible versions (need published Armbian sm8550-* patches)." >&2
+        echo "Try: KERNEL_VER=7.0.14 ./make.sh" >&2
         return 1
     }
     echo "  auto: linux-${ver} (download without CDN verify)" >&2

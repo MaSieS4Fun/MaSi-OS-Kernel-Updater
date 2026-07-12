@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Extract 11 DTBs from a ROCKNIX zImage → slot-NN.dtb
+# Extract DTB chain from local /boot/KERNEL zImage → slot-NN.dtb (build cache only).
 set -euo pipefail
 
 extract_dtb_chain_from_zimage() {
@@ -63,12 +63,16 @@ print(n)
 PY
 }
 
-extract_dtb_chain_from_rocknix_kernel() {
-    local kernel_blob="$1" dest_dir="$2" work count
+extract_dtb_chain_from_boot_kernel() {
+    local kernel_blob="$1" dest_dir="$2" work count min_slots
+
+    # shellcheck source=lib/dtb-chain/map.sh
+    source "${ROOT}/lib/dtb-chain/map.sh"
+    min_slots="$(dtb_chain_min_slots)"
 
     kernel_blob="$(readlink -f "${kernel_blob}")"
     [[ -f "${kernel_blob}" ]] || {
-        echo "Missing ROCKNIX KERNEL: ${kernel_blob}" >&2
+        echo "Missing boot KERNEL: ${kernel_blob}" >&2
         return 1
     }
     command -v abootimg >/dev/null 2>&1 || {
@@ -87,71 +91,74 @@ extract_dtb_chain_from_rocknix_kernel() {
         return 1
     }
 
-    echo "==> Extracting DTB chain (ROCKNIX reference)..." >&2
+    echo "==> Caching DTB chain from ${kernel_blob}..." >&2
     count="$(extract_dtb_chain_from_zimage "${work}/zImage" "${dest_dir}")"
     rm -rf "${work}"
     echo "  ${count} slot(s) → ${dest_dir}/" >&2
     export DTB_CHAIN_REFERENCE_COUNT="${count}"
-    [[ "${count}" -ge 11 ]] || {
-        echo "Expected ≥11 DTBs; found ${count}" >&2
+    [[ "${count}" -ge "${min_slots}" ]] || {
+        echo "Expected ≥${min_slots} DTBs; found ${count}" >&2
         return 1
     }
     echo "${count}"
 }
 
-resolve_rocknix_kernel_path() {
+# Back-compat alias
+extract_dtb_chain_from_rocknix_kernel() {
+    extract_dtb_chain_from_boot_kernel "$@"
+}
+
+resolve_local_boot_kernel() {
     local candidate
-    if [[ -n "${ROCKNIX_KERNEL:-}" && -f "${ROCKNIX_KERNEL}" ]]; then
-        readlink -f "${ROCKNIX_KERNEL}"
+    if [[ -n "${BOOT_KERNEL_PATH:-}" && -f "${BOOT_KERNEL_PATH}" ]]; then
+        readlink -f "${BOOT_KERNEL_PATH}"
         return 0
     fi
-    for candidate in \
-        "${BOOT_KERNEL_PATH:-/boot/KERNEL}" \
-        /boot/KERNEL \
-        "${ROOT}/device-tree/reference/KERNEL" \
-        "${ROOT}/rocknix-reference/KERNEL"; do
+    for candidate in /boot/KERNEL; do
         [[ -f "${candidate}" ]] && readlink -f "${candidate}" && return 0
     done
     return 1
 }
 
+resolve_rocknix_kernel_path() {
+    resolve_local_boot_kernel
+}
+
+_ref_chain_slot_count() {
+    local dir="$1" n=0 f
+    shopt -s nullglob
+    for f in "${dir}"/slot-*.dtb; do
+        [[ -f "${f}" ]] && n=$((n + 1))
+    done
+    shopt -u nullglob
+    echo "${n}"
+}
+
 ensure_reference_dtb_chain() {
     local ref_dir="${DTB_REFERENCE_DIR:-${CACHE_DIR}/dtb-chain/reference}"
-    local vendored="${ROOT}/device-tree/vendored"
-    local kernel n=0 f
+    local kernel n min_slots
+
+    # shellcheck source=lib/dtb-chain/map.sh
+    source "${ROOT}/lib/dtb-chain/map.sh"
+    min_slots="$(dtb_chain_min_slots)"
 
     mkdir -p "${ref_dir}"
+    n="$(_ref_chain_slot_count "${ref_dir}")"
 
-    for f in "${vendored}"/slot-*.dtb; do
-        [[ -f "${f}" ]] || continue
-        n=$((n + 1))
-    done
-    if [[ "${n}" -ge 11 ]]; then
-        echo "==> DTB chain: device-tree/vendored/ (${n} slots)" >&2
-        rm -f "${ref_dir}"/slot-*.dtb
-        cp -f "${vendored}"/slot-*.dtb "${ref_dir}/"
-        cp -f "${vendored}/MANIFEST.txt" "${ref_dir}/" 2>/dev/null || true
+    if [[ "${n}" -ge "${min_slots}" ]]; then
+        echo "==> DTB chain cache: ${n} slots" >&2
         DTB_REFERENCE_DIR="${ref_dir}"
         export DTB_REFERENCE_DIR
         return 0
     fi
 
-    if [[ -f "${ref_dir}/slot-00.dtb" && -f "${ref_dir}/slot-10.dtb" ]]; then
-        echo "==> DTB chain: cache ${ref_dir}" >&2
-        DTB_REFERENCE_DIR="${ref_dir}"
-        export DTB_REFERENCE_DIR
-        return 0
-    fi
-
-    kernel="$(resolve_rocknix_kernel_path)" || {
-        echo "No vendored DTB chain and no ROCKNIX_KERNEL." >&2
-        echo "  Options:" >&2
-        echo "    ROCKNIX_KERNEL=/boot/KERNEL ./make.sh" >&2
-        echo "    ./scripts/vendor-dtb-chain.sh /boot/KERNEL" >&2
+    kernel="$(resolve_local_boot_kernel)" || {
+        echo "Need ${BOOT_KERNEL_PATH:-/boot/KERNEL} on this system for DTB chain base slots." >&2
+        echo "  Build on the handheld, or copy a working KERNEL to /boot/ first." >&2
         return 1
     }
 
-    extract_dtb_chain_from_rocknix_kernel "${kernel}" "${ref_dir}" >/dev/null
+    extract_dtb_chain_from_boot_kernel "${kernel}" "${ref_dir}" >/dev/null
     DTB_REFERENCE_DIR="${ref_dir}"
     export DTB_REFERENCE_DIR
 }

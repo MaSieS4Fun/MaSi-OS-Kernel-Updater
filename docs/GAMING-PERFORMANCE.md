@@ -222,8 +222,10 @@ du -h output/.build/*-masi/initrd.img-*
 ### Boot cmdline (embedded in `boot/KERNEL`)
 
 ```
-root=UUID=<your-ext4-uuid> clk_ignore_unused pd_ignore_unused quiet rw rootwait psi=0 arm64.nopauth efi=noruntime video=efifb:off
+clk_ignore_unused pd_ignore_unused quiet rw rootwait root=UUID=<your-ext4-uuid>
 ```
+
+Optional (legacy ABL only): `ABL_CMDLINE_EXTRAS=1` adds `psi=0 arm64.nopauth efi=noruntime video=efifb:off`.
 
 Must **not** include: `irqaffinity=0-2`, `devicetree=`, `dtb=`.
 

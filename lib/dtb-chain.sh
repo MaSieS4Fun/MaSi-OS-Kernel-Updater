@@ -22,14 +22,19 @@ source "${ROOT}/config/defaults.conf"
 # shellcheck source=lib/output.sh
 source "${ROOT}/lib/output.sh"
 
-# shellcheck source=lib/dtb-chain/extract.sh
-source "${ROOT}/lib/dtb-chain/extract.sh"
+# shellcheck source=lib/dtb-chain/targets.sh
+source "${ROOT}/lib/dtb-chain/targets.sh"
 # shellcheck source=lib/dtb-chain/assemble.sh
 source "${ROOT}/lib/dtb-chain/assemble.sh"
 # shellcheck source=lib/dtb-chain/zimage.sh
 source "${ROOT}/lib/dtb-chain/zimage.sh"
 # shellcheck source=lib/dtb-chain/verify.sh
 source "${ROOT}/lib/dtb-chain/verify.sh"
+
+# shellcheck source=lib/dtb-chain/map.sh
+source "${ROOT}/lib/dtb-chain/map.sh"
+# shellcheck source=lib/dtb-chain/sanitize.sh
+source "${ROOT}/lib/dtb-chain/sanitize.sh"
 
 log()  { printf '[dtb-chain] %s\n' "$*" >&2; }
 die()  { log "ERROR: $*"; exit 1; }
@@ -49,7 +54,7 @@ resolve_build_out_dir() {
 }
 
 dtb_chain_main() {
-    local out_dir staging chain_asm ref_dir kbuild_dtbs zimage
+    local out_dir staging chain_asm kbuild_dtbs zimage
 
     out_dir="$(resolve_build_out_dir)" || die "No prior build. Run ./make.sh (kbuild) first."
     staging="$(resolve_build_staging_dir "${out_dir}" "${BUILD_RELEASE:-}")"
@@ -59,10 +64,10 @@ dtb_chain_main() {
 
     [[ -f "${staging}/Image" ]] || die "Missing ${staging}/Image"
 
-    ensure_reference_dtb_chain || exit 1
-    ref_dir="${DTB_REFERENCE_DIR}"
-
-    assemble_dtb_chain "${chain_asm}" "${kbuild_dtbs}" "${ref_dir}" || exit 1
+    verify_kbuild_dtbs_ready "${kbuild_dtbs}" || exit 1
+    assemble_dtb_chain "${chain_asm}" "${kbuild_dtbs}" "" || exit 1
+    sanitize_dtb_dir "${chain_asm}"
+    sanitize_dtb_dir "${kbuild_dtbs}"
     build_zimage_abl "${staging}/Image" "${chain_asm}" "${zimage}" || exit 1
     verify_abl_dtb_chain "${zimage}" || exit 1
 
@@ -70,7 +75,7 @@ dtb_chain_main() {
     export BUILD_OUT_DIR ABL_EMBEDDED_DTB_COUNT
 
     log "DONE: ${zimage}"
-    log "  Chain: ${chain_asm}/ (11 slots)"
+    log "  Chain: ${chain_asm}/ ($(dtb_chain_slot_count) slots)"
     log "  Boot: ABL selects DTB — do not use devicetree= in GRUB/EFI"
 }
 
