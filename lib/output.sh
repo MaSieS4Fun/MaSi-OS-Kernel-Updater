@@ -62,6 +62,8 @@ Or manually:
   cp -a firmware/* /usr/lib/firmware/
   cp -a modules/${release} /usr/lib/modules/
 
+Internal UFS install: same boot/KERNEL → ROCKNIX partition (no second image; see docs/INTERNAL-UFS-BOOT.md)
+
 Reboot after install.
 EOF
 
@@ -78,6 +80,25 @@ EOF
         echo "  boot/KERNEL.md5 ($(cut -c1-8 < "${out_dir}/boot/KERNEL.md5"))" >&2
     fi
 
+    if [[ "${DEBUG_BOOTLOG:-0}" == "1" ]]; then
+        cat > "${out_dir}/boot/DEBUG-BOOTLOG.txt" <<'EOF'
+MaSi DEBUG kernel — boot log capture enabled
+
+On boot (even if the screen stays black), the initramfs writes:
+  /boot/masi-boot.log
+
+After a failed boot:
+  1. Power off
+  2. Boot ROCKNIX or ARMADA (same SD card)
+  3. Copy /boot/masi-boot.log and send it for analysis
+
+The file is plain text (dmesg + cmdline + device-tree model).
+EOF
+        cp -f "${ROOT}/scripts/masi-bootlog-continue.sh" \
+            "${out_dir}/boot/masi-bootlog-continue.sh" 2>/dev/null || true
+        echo "  boot/DEBUG-BOOTLOG.txt (diagnostic build)" >&2
+    fi
+
     find "${out_dir}/modules" -mindepth 2 -maxdepth 2 \( -name source -o -name build \) -type l -delete 2>/dev/null || true
 
     if [[ -f "${staging}/config-${release}" ]]; then
@@ -89,7 +110,7 @@ EOF
     rm -rf "${out_dir}/.staging" "${out_dir}/meta" "${out_dir}/.modules-staging" 2>/dev/null || true
 
     echo "==> Output ready:" >&2
-    echo "  ${out_dir}/boot/KERNEL" >&2
+    echo "  ${out_dir}/boot/KERNEL (SD + UFS ROCKNIX)" >&2
     echo "  ${out_dir}/firmware/" >&2
     echo "  ${out_dir}/modules/${release}/" >&2
     echo "  (build tree: ${staging}/)" >&2

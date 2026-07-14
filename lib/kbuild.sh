@@ -63,12 +63,15 @@ check_build_deps() {
     if [[ "${BUILD_INITRD:-1}" == "1" ]]; then
         command -v mkinitramfs >/dev/null 2>&1 || \
             [[ -x /usr/sbin/mkinitramfs ]] || miss+=(initramfs-tools)
-        command -v lsinitramfs >/dev/null 2>&1 || true
+        command -v busybox >/dev/null 2>&1 || \
+            command -v busybox-static >/dev/null 2>&1 || \
+            dpkg -s busybox-static >/dev/null 2>&1 || \
+            dpkg -s busybox >/dev/null 2>&1 || miss+=(busybox-static)
     fi
     if [[ "${BUILD_BOOTIMG:-1}" == "1" ]]; then
         command -v abootimg >/dev/null 2>&1 || miss+=(abootimg)
     fi
-    [[ ${#miss[@]} -eq 0 ]] || die "Missing dependencies: ${miss[*]}. See README.md"
+    [[ ${#miss[@]} -eq 0 ]] || die "Missing dependencies: ${miss[*]}. See README.md (apt install …)"
 }
 
 resolve_kernel_for_build() {
@@ -118,6 +121,8 @@ kbuild_main() {
 
     log "Kernel: linux-${kernel_ver} (${patch_set})"
     log "Output: ${BUILD_OUT_DIR}/"
+    [[ "${DEBUG_BOOTLOG:-0}" == "1" ]] && \
+        log "DEBUG_BOOTLOG=1 — boot log → /boot/masi-boot.log on device"
 
     if [[ "${BUILD_COMPILE:-1}" == "1" ]]; then
         src_dir="$(download_kernel_source "${kernel_ver}")"

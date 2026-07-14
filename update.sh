@@ -36,9 +36,12 @@ build="${SELECTED_INSTALL_BUILD}"
 release="$(install_resolve_release "${build}")" || exit 1
 
 echo "Build to install: ${build}"
-echo "  boot/KERNEL      → ${INSTALL_BOOT_DST}/"
+echo "  boot/KERNEL          → ${INSTALL_BOOT_DST}/  (microSD root UUID)"
 echo "  firmware/        → ${INSTALL_FIRMWARE_DST}/  (full replace)"
 echo "  modules/${release}/ → ${INSTALL_MODULES_DST}/  (full replace)"
+echo "  audio stack      → modules-load.d, modprobe.d, masi-qcom-audio.service"
+echo "  deep suspend     → sleep.conf.d + logind (if SUSPEND_DEEP=1 at build)"
+echo "  UFS install      → /usr/lib/masi/ufs-linux/  (sudo masi-install-to-ufs)"
 echo ""
 echo "Current system will be saved to: ${OUTPUT_DIR}/old_kernel/"
 echo "(owned by your user after backup — safe to delete without sudo)"

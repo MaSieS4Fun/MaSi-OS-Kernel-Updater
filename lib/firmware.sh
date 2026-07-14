@@ -46,11 +46,20 @@ prepare_firmware_masi() {
     local n ayn="${fw_out}/qcom/sm8550/ayn"
     n="$(find "${fw_out}" -type f 2>/dev/null | wc -l | tr -d ' ')"
     echo "  ${n} files ($(du -sh "${fw_out}" | cut -f1))" >&2
-    for dev in odin2 odin2mini odin2portal thor; do
-        [[ -f "${ayn}/${dev}/adsp.mbn" ]] || {
-            echo "  WARNING: missing firmware qcom/sm8550/ayn/${dev}/adsp.mbn" >&2
-        }
-    done
+
+    # shellcheck source=lib/audio-stack.sh
+    source "${ROOT}/lib/audio-stack.sh"
+    if ! verify_audio_firmware_tree "${fw_out}"; then
+        if [[ "${mode}" == "host" ]] && [[ -d "${fw_out}/qcom/sm8550" ]]; then
+            echo "  WARNING: host firmware missing AYN ADSP — HDMI/DP audio may not work" >&2
+        else
+            echo "ERROR: AYN ADSP firmware incomplete (need qcom/sm8550/ayn/*/adsp.mbn)" >&2
+            return 1
+        fi
+    else
+        echo "  OK   ADSP firmware for odin2/mini/portal/thor" >&2
+    fi
+
     [[ "${n}" -gt 0 ]] || {
         echo "ERROR: empty firmware output" >&2
         return 1

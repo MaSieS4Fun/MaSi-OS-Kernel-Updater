@@ -124,8 +124,10 @@ apply_armbian_patches() {
     apply_masi_extra_dts "${src_dir}" || true
     apply_masi_haptics_dtsi "${src_dir}" || failed=1
     apply_masi_kernel_patches "${src_dir}" || failed=1
-    verify_masi_haptics_stack "${src_dir}" || failed=1
-    _verify_masi_dtb_sources "${src_dir}" || failed=1
+        verify_masi_thor_panel_reset "${src_dir}" || failed=1
+        verify_masi_haptics_stack "${src_dir}" || failed=1
+        verify_masi_suspend_stack "${src_dir}" || failed=1
+        _verify_masi_dtb_sources "${src_dir}" || failed=1
 
     if [[ "${failed}" -gt 0 ]] && _verify_masi_dtb_sources "${src_dir}" 2>/dev/null; then
         local non_dtb_fail=0 f base
@@ -184,13 +186,224 @@ apply_masi_haptics_dtsi() {
     echo "  OK   MaSi qcs8550-ayn-common haptics DT" >&2
 }
 
+ensure_masi_suspend_patches() {
+    local patch_dir="${ROOT}/patches/masi"
+    local p need_fetch=0
+
+    [[ "${SUSPEND_DEEP_PATCHES:-1}" == "0" ]] && return 0
+
+    for p in \
+        1006-scsi-ufs-drain-relink-completions-out-of-band-pm.patch \
+        1007-scsi-ufs-qcom-balance-irq-on-host-reset-error.patch \
+        1008-scsi-ufs-qcom-propagate-hibern8-exit-failure-clk-scale.patch \
+        1009-scsi-ufs-qcom-auto-hibern8-clk-gating-collision.patch \
+        1010-scsi-ufs-qcom-keep-mphy-powered-on-hibern8-park.patch \
+        1011-ufs-qcom-qmp-rx-linecfg-link-startup.patch \
+        1012-mailbox-qcom-ipcc-remove-irqf-no-suspend.patch \
+        1013-thermal-qcom-tsens-skip-ayn-thor-uplow-wake-irq.patch; do
+        [[ -f "${patch_dir}/${p}" ]] || need_fetch=1
+    done
+    [[ "${need_fetch}" -eq 0 ]] && return 0
+
+    echo "==> Fetching ROCKNIX suspend patches (1006–1013)…" >&2
+    if command -v python3 >/dev/null 2>&1; then
+        python3 "${ROOT}/scripts/fetch-rocknix-suspend-patches.py"
+    elif [[ -x "${ROOT}/scripts/fetch-rocknix-suspend-patches.sh" ]]; then
+        "${ROOT}/scripts/fetch-rocknix-suspend-patches.sh"
+    else
+        echo "ERROR: missing 1006/1011 — install python3 or run scripts/fetch-rocknix-suspend-patches.py" >&2
+        return 1
+    fi
+
+    for p in \
+        1006-scsi-ufs-drain-relink-completions-out-of-band-pm.patch \
+        1007-scsi-ufs-qcom-balance-irq-on-host-reset-error.patch \
+        1008-scsi-ufs-qcom-propagate-hibern8-exit-failure-clk-scale.patch \
+        1009-scsi-ufs-qcom-auto-hibern8-clk-gating-collision.patch \
+        1010-scsi-ufs-qcom-keep-mphy-powered-on-hibern8-park.patch \
+        1011-ufs-qcom-qmp-rx-linecfg-link-startup.patch \
+        1012-mailbox-qcom-ipcc-remove-irqf-no-suspend.patch \
+        1013-thermal-qcom-tsens-skip-ayn-thor-uplow-wake-irq.patch; do
+        [[ -f "${patch_dir}/${p}" ]] || {
+            echo "ERROR: suspend patch download failed (no ${p})" >&2
+            return 1
+        }
+    done
+}
+
+verify_masi_suspend_stack() {
+    local src_dir="$1" failed=0
+
+    [[ "${SUSPEND_DEEP_PATCHES:-1}" == "0" ]] && return 0
+
+    echo "==> Verify MaSi deep-suspend stack" >&2
+
+    if grep -q 'ufshcd_relinking' "${src_dir}/drivers/ufs/core/ufshcd.c" 2>/dev/null \
+        && grep -q 'pm_poll_timer' "${src_dir}/include/ufs/ufshcd.h" 2>/dev/null; then
+        echo "  OK   ufshcd PM relink drain" >&2
+    else
+        echo "  FAIL missing ufshcd PM relink drain (1006)" >&2
+        failed=1
+    fi
+
+    if grep -q 'UFSHCD_QUIRK_BROKEN_AUTO_HIBERN8' "${src_dir}/drivers/ufs/host/ufs-qcom.c" 2>/dev/null; then
+        echo "  OK   ufs-qcom auto-hibern8 quirk" >&2
+    else
+        echo "  FAIL missing ufs-qcom auto-hibern8 quirk (1009)" >&2
+        failed=1
+    fi
+
+    if grep -q 'qcom_qmp_ufs_ctrl_rx_linecfg' "${src_dir}/drivers/phy/qualcomm/phy-qcom-qmp-ufs.c" 2>/dev/null; then
+        echo "  OK   QMP UFS RX LineCfg helper" >&2
+    else
+        echo "  FAIL missing QMP UFS LineCfg (1011)" >&2
+        failed=1
+    fi
+
+    [[ "${failed}" -eq 0 ]]
+}
+
+# Deep-suspend stack (ROCKNIX PR #2952). 1011 before 1009/1010: those patches shift
+# ufs-qcom.c line numbers and break the upstream ROCKNIX LineCfg hunks on linux-7.0.
+_masi_suspend_patch_order() {
+    cat <<'EOF'
+1006-scsi-ufs-drain-relink-completions-out-of-band-pm.patch
+1007-scsi-ufs-qcom-balance-irq-on-host-reset-error.patch
+1008-scsi-ufs-qcom-propagate-hibern8-exit-failure-clk-scale.patch
+1011-ufs-qcom-qmp-rx-linecfg-link-startup.patch
+1009-scsi-ufs-qcom-auto-hibern8-clk-gating-collision.patch
+1010-scsi-ufs-qcom-keep-mphy-powered-on-hibern8-park.patch
+1012-mailbox-qcom-ipcc-remove-irqf-no-suspend.patch
+1013-thermal-qcom-tsens-skip-ayn-thor-uplow-wake-irq.patch
+EOF
+}
+
+_masi_is_suspend_patch() {
+    local base="$1" p
+    while IFS= read -r p; do
+        [[ -n "${p}" && "${base}" == "${p}" ]] && return 0
+    done < <(_masi_suspend_patch_order)
+    return 1
+}
+
+_masi_apply_single_patch() {
+    local src_dir="$1" patch="$2"
+    local base rc=0
+
+    base="$(basename "${patch}")"
+    if patch -p1 --dry-run -d "${src_dir}" -f < "${patch}" >/dev/null 2>&1; then
+        patch -p1 -d "${src_dir}" -f < "${patch}" >/dev/null 2>&1
+        return $?
+    fi
+    if patch -p1 --dry-run -l -d "${src_dir}" -f < "${patch}" >/dev/null 2>&1; then
+        patch -p1 -l -d "${src_dir}" -f < "${patch}" >/dev/null 2>&1
+        return $?
+    fi
+    if patch -p1 --dry-run -R -d "${src_dir}" -f < "${patch}" >/dev/null 2>&1; then
+        return 2
+    fi
+    case "${base}" in
+    1007-scsi-ufs-qcom-balance-irq-on-host-reset-error.patch)
+        apply_masi_ufs_host_reset_bridge "${src_dir}" && return 0
+        ;;
+    1012-mailbox-qcom-ipcc-remove-irqf-no-suspend.patch)
+        apply_masi_ipcc_no_suspend_bridge "${src_dir}" && return 0
+        ;;
+    esac
+    mkdir -p "${OUTPUT_DIR:-${ROOT}/output}"
+    patch -p1 --dry-run -d "${src_dir}" -f < "${patch}" \
+        > "${OUTPUT_DIR}/patch-fail-${base}.txt" 2>&1 || true
+    return 1
+}
+
+_masi_apply_one_masi_patch() {
+    local src_dir="$1" patch="$2"
+    local base rc
+
+    base="$(basename "${patch}")"
+    if [[ "${base}" == "1003-rsinput-add-ff.patch" ]]; then
+        apply_masi_rsinput_ff_bridge "${src_dir}"
+        return $?
+    fi
+    _masi_apply_single_patch "${src_dir}" "${patch}"
+    rc=$?
+    return "${rc}"
+}
+
+apply_masi_ufs_host_reset_bridge() {
+    local src_dir="$1" ufs="${src_dir}/drivers/ufs/host/ufs-qcom.c"
+
+    [[ -f "${ufs}" ]] || return 1
+    if grep -q 'assert/deassert failure leaks the disable' "${ufs}" 2>/dev/null; then
+        return 0
+    fi
+
+    python3 - "${ufs}" <<'PY' && return 0
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+needle = "\t\treturn ret;\n\t}\n\n\tusleep_range(1000, 1100);\n\n\tif (reenable_intr)"
+if needle not in text:
+    raise SystemExit(1)
+replacement = (
+    "\t\tgoto out;\n\t}\n\n\tusleep_range(1000, 1100);\n\n\tret = 0;\nout:\n"
+    "\t/*\n\t * Re-enable the IRQ on the error exits too, otherwise a reset\n"
+    "\t * assert/deassert failure leaks the disable and leaves the controller\n"
+    "\t * IRQ masked. (This path became reachable once ufshcd_disable_irq() stops\n"
+    "\t * synchronizing during PM resume.)\n\t */\n\tif (reenable_intr)"
+)
+text = text.replace(needle, replacement, 1)
+text = text.replace(
+    "\t\treturn ret;\n\t}\n\n\t/*\n\t * The hardware requirement",
+    "\t\tgoto out;\n\t}\n\n\t/*\n\t * The hardware requirement",
+    1,
+)
+text = text.replace(
+    "\tif (reenable_intr)\n\t\tufshcd_enable_irq(hba);\n\n\treturn 0;\n}\n\nstatic u32 ufs_qcom_get_hs_gear",
+    "\tif (reenable_intr)\n\t\tufshcd_enable_irq(hba);\n\n\treturn ret;\n}\n\nstatic u32 ufs_qcom_get_hs_gear",
+    1,
+)
+if "assert/deassert failure leaks the disable" not in text:
+    raise SystemExit(1)
+path.write_text(text)
+PY
+    return 1
+}
+
+apply_masi_ipcc_no_suspend_bridge() {
+    local src_dir="$1" ipcc="${src_dir}/drivers/mailbox/qcom-ipcc.c"
+
+    [[ -f "${ipcc}" ]] || return 1
+    if ! grep -q 'IRQF_NO_SUSPEND' "${ipcc}" 2>/dev/null; then
+        return 0
+    fi
+
+    python3 - "${ipcc}" <<'PY' && return 0
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+old = "\t\t\t       IRQF_TRIGGER_HIGH | IRQF_NO_SUSPEND |\n\t\t\t       IRQF_NO_THREAD"
+new = "\t\t\t       IRQF_TRIGGER_HIGH |\n\t\t\t       IRQF_NO_THREAD"
+if old not in text:
+    raise SystemExit(1)
+path.write_text(text.replace(old, new, 1))
+PY
+    return 1
+}
+
 apply_masi_kernel_patches() {
     local src_dir="$1" patch_dir="${ROOT}/patches/masi"
-    local patch base failed=0 applied=0 skipped=0
+    local patch base failed=0 applied=0 skipped=0 rc suspend_name
 
     [[ -d "${patch_dir}" ]] || return 0
 
-    echo "==> MaSi kernel patches (gamepad haptics)" >&2
+    ensure_masi_suspend_patches || return 1
+
+    echo "==> MaSi kernel patches (haptics, Thor, deep suspend, …)" >&2
     shopt -s nullglob
     for patch in "${patch_dir}"/[0-9]*.patch; do
         base="$(basename "${patch}")"
@@ -199,22 +412,13 @@ apply_masi_kernel_patches() {
             skipped=$((skipped + 1))
             continue
         fi
-        if [[ "${base}" == "1003-rsinput-add-ff.patch" ]]; then
-            if apply_masi_rsinput_ff_bridge "${src_dir}"; then
-                echo "  OK   ${base}" >&2
-                applied=$((applied + 1))
-            else
-                echo "  FAIL ${base}" >&2
-                failed=$((failed + 1))
-            fi
-            continue
-        fi
-        if patch -p1 --dry-run -d "${src_dir}" -f < "${patch}" >/dev/null 2>&1; then
-            patch -p1 -d "${src_dir}" -f < "${patch}" >/dev/null 2>&1 && {
-                echo "  OK   ${base}" >&2
-                applied=$((applied + 1))
-            } || { echo "  FAIL ${base}" >&2; failed=$((failed + 1)); }
-        elif patch -p1 --dry-run -R -d "${src_dir}" -f < "${patch}" >/dev/null 2>&1; then
+        _masi_is_suspend_patch "${base}" && continue
+        _masi_apply_one_masi_patch "${src_dir}" "${patch}"
+        rc=$?
+        if [[ "${rc}" -eq 0 ]]; then
+            echo "  OK   ${base}" >&2
+            applied=$((applied + 1))
+        elif [[ "${rc}" -eq 2 ]]; then
             echo "  SKIP ${base}" >&2
             skipped=$((skipped + 1))
         else
@@ -222,8 +426,28 @@ apply_masi_kernel_patches() {
             failed=$((failed + 1))
         fi
     done
+
+    while IFS= read -r suspend_name; do
+        [[ -n "${suspend_name}" ]] || continue
+        patch="${patch_dir}/${suspend_name}"
+        [[ -f "${patch}" ]] || continue
+        _masi_apply_one_masi_patch "${src_dir}" "${patch}"
+        rc=$?
+        if [[ "${rc}" -eq 0 ]]; then
+            echo "  OK   ${suspend_name}" >&2
+            applied=$((applied + 1))
+        elif [[ "${rc}" -eq 2 ]]; then
+            echo "  SKIP ${suspend_name}" >&2
+            skipped=$((skipped + 1))
+        else
+            echo "  FAIL ${suspend_name}" >&2
+            failed=$((failed + 1))
+        fi
+    done < <(_masi_suspend_patch_order)
+
     shopt -u nullglob
     echo "==> MaSi patches: ${applied} ok, ${skipped} skip, ${failed} fail" >&2
+    verify_masi_suspend_stack "${src_dir}" || failed=1
     [[ "${failed}" -eq 0 ]]
 }
 
@@ -581,6 +805,24 @@ sys.exit(1)
 PY
 }
 
+verify_masi_thor_panel_reset() {
+    local src_dir="$1"
+    local panel="${src_dir}/drivers/gpu/drm/panel/panel-ddic-ch13726a.c"
+
+    [[ -f "${panel}" ]] || return 0
+
+    echo "==> Verify Thor CH13726A reset polarity" >&2
+
+    if grep -q 'devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH)' "${panel}" \
+        && ! grep -q 'GPIOD_OUT_LOW' "${panel}"; then
+        echo "  OK   panel-ddic-ch13726a reset matches mainline polarity" >&2
+        return 0
+    fi
+
+    echo "  FAIL panel-ddic-ch13726a still uses inverted reset GPIO" >&2
+    return 1
+}
+
 verify_masi_haptics_stack() {
     local src_dir="$1"
     local rsinput="${src_dir}/drivers/input/joystick/rsinput.c"
@@ -702,6 +944,13 @@ apply_ayn_family_kconfig() {
     do
         "${sc}" --file "${cfg}" --enable "${sym}" 2>/dev/null || true
     done
+    for sym in QCOM_Q6V5_ADSP SND_SOC_SC8280XP SOUNDWIRE SOUNDWIRE_QCOM SND_SOC_QCOM_SDW; do
+        "${sc}" --file "${cfg}" --module "${sym}" 2>/dev/null || true
+    done
+    for sym in SND_SOC_QDSP6_CORE SND_SOC_QDSP6_AFE SND_SOC_QDSP6_ROUTING SND_SOC_QDSP6_APM; do
+        "${sc}" --file "${cfg}" --module "${sym}" 2>/dev/null || true
+    done
+    "${sc}" --file "${cfg}" --enable DRM_MSM_DP 2>/dev/null || true
     make -C "${src_dir}" ARCH=arm64 olddefconfig
 }
 

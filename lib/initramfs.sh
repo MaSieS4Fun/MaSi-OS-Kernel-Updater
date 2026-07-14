@@ -4,6 +4,14 @@
 #
 set -euo pipefail
 
+_has_busybox_for_initramfs() {
+    command -v busybox >/dev/null 2>&1 && return 0
+    command -v busybox-static >/dev/null 2>&1 && return 0
+    dpkg -s busybox-static >/dev/null 2>&1 && return 0
+    dpkg -s busybox >/dev/null 2>&1 && return 0
+    return 1
+}
+
 _initrd_try_ref() {
     local candidate="$1"
     [[ -n "${candidate}" && -f "${candidate}" ]] || return 1
@@ -248,6 +256,17 @@ _install_initramfs_hooks() {
 
     install -m755 "${ROOT}/hooks/masi-no-early-drm" \
         "${mod_root}/etc/initramfs-tools/hooks/masi-no-early-drm"
+    mkdir -p "${mod_root}/etc/initramfs-tools/scripts/init-premount"
+    install -m755 "${ROOT}/hooks/masi-dual-root-premount" \
+        "${mod_root}/etc/initramfs-tools/scripts/init-premount/masi-dual-root"
+    install -m755 "${ROOT}/hooks/masi-dual-root" \
+        "${mod_root}/etc/initramfs-tools/hooks/masi-dual-root"
+
+    if [[ "${DEBUG_BOOTLOG:-0}" == "1" ]]; then
+        install -m755 "${ROOT}/hooks/masi-bootlog" \
+            "${mod_root}/etc/initramfs-tools/hooks/masi-bootlog"
+        echo "  initramfs: DEBUG_BOOTLOG=1 → /boot/masi-boot.log capture enabled" >&2
+    fi
 
     case "${profile}" in
         efi-clean|minimal)
@@ -343,6 +362,11 @@ build_initramfs_masi() {
         echo "Install: sudo apt install initramfs-tools" >&2
         return 1
     }
+    _has_busybox_for_initramfs || {
+        echo "E: busybox or busybox-static is required for mkinitramfs" >&2
+        echo "Install: sudo apt install busybox-static" >&2
+        return 1
+    }
 
     initrd="${staging}/initrd.img-${release}"
     mkdir -p "${staging}"
@@ -361,18 +385,23 @@ build_initramfs_masi() {
         mkdir -p "${mod_root}/lib/modules/${release}"
     fi
 
+    local mk_d="${mod_root}/etc/initramfs-tools"
+
     echo "==> mkinitramfs ${release}..." >&2
     [[ "${gold_fallback}" -eq 1 ]] && \
         echo "  (warnings about UUID fsck or /etc/shadow are usually harmless)" >&2
 
     if command -v mkinitramfs >/dev/null 2>&1; then
-        mkinitramfs -k "${release}" -r "${mod_root}" -o "${initrd}" 2>&1 | tail -12 >&2
+        mkinitramfs -k "${release}" -r "${mod_root}" -d "${mk_d}" -o "${initrd}" 2>&1 | tail -12 >&2
     else
-        "${mkinitramfs_cmd}" -k "${release}" -r "${mod_root}" -o "${initrd}" 2>&1 | tail -12 >&2
+        "${mkinitramfs_cmd}" -k "${release}" -r "${mod_root}" -d "${mk_d}" -o "${initrd}" 2>&1 | tail -12 >&2
     fi
 
     [[ -f "${initrd}" ]] || {
         echo "initramfs failed: ${initrd} was not created" >&2
+        if ! _has_busybox_for_initramfs; then
+            echo "  missing busybox-static — sudo apt install busybox-static" >&2
+        fi
         return 1
     }
 
@@ -390,8 +419,15 @@ build_initramfs_masi() {
 
     local size ko
     size="$(du -h "${initrd}" | cut -f1)"
-    ko="$(lsinitramfs "${initrd}" 2>/dev/null | grep -c '\.ko$' || echo 0)"
+    ko="$(grep -c '\.ko$' < <(lsinitramfs "${initrd}" 2>/dev/null) || true)"
     echo "  initrd.img-${release} (${size}, ${ko} .ko in cpio)" >&2
+
+    if ! grep -Fq 'scripts/init-premount/masi-dual-root' < <(lsinitramfs "${initrd}" 2>/dev/null); then
+        echo "ERROR: initrd missing scripts/init-premount/masi-dual-root (hook failed)" >&2
+        rm -f "${initrd}"
+        return 1
+    fi
+    echo "  initrd: masi-dual-root init-premount OK" >&2
 
     if [[ "$(stat -c%s "${initrd}")" -gt "${max_bytes}" ]]; then
         echo "ERROR: initrd > $((max_bytes / 1024 / 1024)) MB — does not fit ABL bootimg." >&2

@@ -74,6 +74,26 @@ verify_build_output() {
     fi
     echo "  OK  cmdline: no devicetree= pin" >&2
 
+    # shellcheck source=lib/cmdline.sh
+    source "${ROOT}/lib/cmdline.sh"
+    if verify_unified_abl_cmdline "${cmdline}"; then
+        echo "  OK  cmdline: dual-boot (root=UUID + masi.ufsroot or PARTLABEL)" >&2
+    else
+        echo "  ERROR: KERNEL cmdline missing root=PARTLABEL=STORAGE" >&2
+        echo "        ${cmdline}" >&2
+        rm -rf "${work}"
+        return 1
+    fi
+
+    if grep -Fq 'scripts/init-premount/masi-dual-root' \
+        < <(gzip -dc "${work}/initrd.img" 2>/dev/null | cpio -t 2>/dev/null); then
+        echo "  OK  initrd: masi-dual-root init-premount (SD vs UFS root)" >&2
+    else
+        echo "  ERROR: initrd missing scripts/init-premount/masi-dual-root" >&2
+        rm -rf "${work}"
+        return 1
+    fi
+
     [[ -d "${out_dir}/modules/${release}" ]] || {
         echo "  ERROR: missing modules/${release}" >&2
         rm -rf "${work}"
@@ -81,7 +101,23 @@ verify_build_output() {
     }
     echo "  OK  modules/${release}" >&2
 
-    [[ -d "${out_dir}/firmware" ]] && echo "  OK  firmware/" >&2
+    # shellcheck source=lib/audio-stack.sh
+    source "${ROOT}/lib/audio-stack.sh"
+
+    if [[ -d "${out_dir}/firmware" ]]; then
+        echo "  OK  firmware/" >&2
+        verify_audio_firmware_tree "${out_dir}/firmware" || {
+            rm -rf "${work}"
+            return 1
+        }
+        echo "  OK  firmware: ADSP blobs for AYN boards" >&2
+    fi
+
+    verify_audio_modules "${out_dir}/modules/${release}" "${release}" || {
+        rm -rf "${work}"
+        return 1
+    }
+    echo "  OK  audio modules (ADSP + SC8280XP + QDSP6)" >&2
 
     rm -rf "${work}"
     echo "==> verify-build PASSED" >&2

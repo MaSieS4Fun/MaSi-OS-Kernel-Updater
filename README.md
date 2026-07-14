@@ -15,7 +15,7 @@ Repository: **https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater**
 - **Gaming cmdline** — matches working LinuxLoader 6.18.8 (no `video=efifb:off` by default)
 - **Cmdline UUID** — from `/boot/LinuxLoader.cfg` or `/boot/KERNEL` on the system
 - **Initrd** — built locally (`efi-clean`); optional `INITRAMFS_PROFILE=gold` uses `reference/` only
-- **`update.sh`** — backup, clean install to `/boot`, firmware, modules, optional reboot
+- **`update.sh`** — backup, clean install to `/boot`, firmware, modules, **ADSP/audio stack**, **deep suspend**, optional reboot
 
 ---
 
@@ -48,7 +48,7 @@ Fresh clone on a handheld with your preconfigured `/boot/`:
 git clone https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater.git
 cd MaSi-OS-Kernel-Updater
 sudo apt install build-essential libssl-dev libncurses-dev libelf-dev \
-  flex bison bc curl patch initramfs-tools abootimg python3 u-boot-tools \
+  flex bison bc curl patch initramfs-tools busybox-static abootimg python3 u-boot-tools \
   git device-tree-compiler
 ./make.sh
 sudo ./update.sh
@@ -62,7 +62,7 @@ Build on the handheld or an Armbian SM8550 chroot:
 
 ```bash
 sudo apt install build-essential libssl-dev libncurses-dev libelf-dev \
-  flex bison bc curl patch initramfs-tools abootimg python3 u-boot-tools git
+  flex bison bc curl patch initramfs-tools busybox-static abootimg python3 u-boot-tools git
 ```
 
 You need **`/boot/LinuxLoader.cfg`** or **`/boot/KERNEL`** on the device (for `root=UUID=` only — not for DTBs/firmware/initrd).
@@ -83,7 +83,13 @@ KERNEL_VER=7.0.14 BUILD_COMPILE=0 ./make.sh   # repack only (no recompile)
 sudo ./update.sh
 ```
 
-Backs up the running system to `output/old_kernel/` (owned by your user), then installs the new `boot/KERNEL`, firmware, and modules.
+Backs up the running system to `output/old_kernel/` (owned by your user), then installs `boot/KERNEL` (microSD UUID), firmware, modules, and the **Qualcomm ADSP/audio stack**.
+
+Internal UFS dual-boot: **[docs/INTERNAL-UFS-BOOT.md](docs/INTERNAL-UFS-BOOT.md)**
+
+After `update.sh`: `sudo masi-install-to-ufs` (scripts installed to `/usr/lib/masi/ufs-linux/`)
+
+HDMI / USB-C DisplayPort audio: **[docs/HDMI-DP-AUDIO.md](docs/HDMI-DP-AUDIO.md)**
 
 ---
 
@@ -134,6 +140,10 @@ Defaults live in `config/defaults.conf`. Copy `config/defaults.conf.example` →
 |-----|--------|
 | [GAMING-PERFORMANCE.md](docs/GAMING-PERFORMANCE.md) | Standard vs performance; golden config & initrd |
 | [DISPLAY-BOOT.md](docs/DISPLAY-BOOT.md) | Blue/black screen, ROCKNIX ABL, UUID per device |
+| [HDMI-DP-AUDIO.md](docs/HDMI-DP-AUDIO.md) | USB-C DP / HDMI dock audio (ADSP firmware + modules) |
+| [INTERNAL-UFS-BOOT.md](docs/INTERNAL-UFS-BOOT.md) | Dual-boot microSD + internal UFS (one KERNEL) |
+| [SUSPEND.md](docs/SUSPEND.md) | Deep sleep / UFS resume (ROCKNIX PR #2952 patches) |
+| [THOR-DISPLAY.md](docs/THOR-DISPLAY.md) | Thor bottom panel + touch rotation |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Build pipeline |
 | [DTB-ABL.md](docs/DTB-ABL.md) | Multidevice ABL boot |
 | [GITHUB-SETUP.md](docs/GITHUB-SETUP.md) | Publish or push updates to GitHub |

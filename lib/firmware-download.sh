@@ -101,6 +101,8 @@ _firmware_stage_copy() {
         for dev in odin2mini odin2portal thor; do
             [[ -e "${ayn}/${dev}" ]] || ln -sfn odin2 "${ayn}/${dev}"
         done
+    elif [[ ! -f "${ayn}/odin2/adsp.mbn" ]]; then
+        echo "  WARNING: no qcom/sm8550/ayn/odin2 in firmware checkout" >&2
     fi
 
     local n

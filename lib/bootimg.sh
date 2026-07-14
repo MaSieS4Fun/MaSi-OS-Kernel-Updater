@@ -56,9 +56,45 @@ resolve_bootimg_template() {
     return 1
 }
 
+_write_abl_bootimg_cfg() {
+    local hw_cfg="$1" cmdline="$2" out_cfg="$3"
+    {
+        grep -E '^(bootsize|pagesize|kerneladdr|ramdiskaddr|secondaddr|tagsaddr|name) ' \
+            "${hw_cfg}"
+        printf 'cmdline = %s\n' "${cmdline}"
+    } > "${out_cfg}"
+}
+
+_create_abl_bootimg() {
+    local zimage="$1" initrd="$2" cfg="$3" kernel_out="$4"
+    local kernel_tmp
+    kernel_tmp="$(dirname "${cfg}")/KERNEL.packing"
+
+    rm -f "${kernel_tmp}" "${kernel_out}"
+    mkdir -p "$(dirname "${kernel_out}")" "$(dirname "${kernel_tmp}")"
+
+    if ! abootimg --create "${kernel_tmp}" -f "${cfg}" -k "${zimage}" -r "${initrd}"; then
+        rm -f "${kernel_tmp}"
+        echo "ERROR: abootimg --create failed for ${kernel_out}" >&2
+        echo "  zImage: ${zimage}" >&2
+        echo "  initrd: ${initrd}" >&2
+        echo "  cfg:    ${cfg}" >&2
+        return 1
+    fi
+
+    mv -f "${kernel_tmp}" "${kernel_out}"
+
+    [[ -s "${kernel_out}" ]] || {
+        echo "ERROR: ${kernel_out} empty after abootimg" >&2
+        return 1
+    }
+    return 0
+}
+
 pack_bootimg_abl() {
-    local out_dir="$1" release="${2:-}" uuid cmdline
-    local staging boot_dir zimage initrd cfg kernel_out template
+    local out_dir="$1" release="${2:-}"
+    local sd_uuid="" cmdline
+    local staging boot_dir zimage initrd cfg kernel_out template hw_cfg
 
     out_dir="$(cd "${out_dir}" && pwd)"
     staging="$(resolve_build_staging_dir "${out_dir}" "${release}")"
@@ -68,6 +104,7 @@ pack_bootimg_abl() {
     initrd="${staging}/initrd.img-${release}"
     cfg="${staging}/bootimg.cfg"
     kernel_out="${boot_dir}/KERNEL"
+    hw_cfg="${staging}/bootimg.hw.cfg"
 
     [[ -f "${zimage}" ]] || {
         echo "Missing ${zimage} — run dtb-chain first" >&2
@@ -78,14 +115,14 @@ pack_bootimg_abl() {
         return 1
     }
 
-    resolve_root_uuid || {
-        echo "Could not get root=UUID= from ${BOOT_LINUXLOADER_CFG_PATH:-/boot/LinuxLoader.cfg} or ${BOOT_KERNEL_PATH:-/boot/KERNEL}" >&2
-        return 1
-    }
-    uuid="${RESOLVED_ROOT_UUID}"
-    echo "  root UUID: ${uuid} (from ${ROOT_UUID_SOURCE})" >&2
+    if resolve_root_uuid >/dev/null 2>&1; then
+        sd_uuid="${RESOLVED_ROOT_UUID}"
+        echo "  masi.ufsroot: PARTLABEL=${INTERNAL_ROOT_PARTLABEL:-STORAGE} (from ${ROOT_UUID_SOURCE})" >&2
+    else
+        echo "  masi.sdroot: (none — run update.sh on device to embed microSD root UUID)" >&2
+    fi
 
-    cmdline="$(build_abl_cmdline "${uuid}")" || return 1
+    cmdline="$(build_unified_abl_cmdline "${sd_uuid}")" || return 1
 
     template="$(resolve_bootimg_template)" || {
         echo "No bootimg template (config/bootimg.abl.cfg)" >&2
@@ -98,24 +135,14 @@ pack_bootimg_abl() {
         return 1
     }
 
-    copy_bootimg_hw_template "${template}" "${cfg}.hw"
-
-    {
-        grep -E '^(bootsize|pagesize|kerneladdr|ramdiskaddr|secondaddr|tagsaddr|name) ' \
-            "${cfg}.hw"
-        printf 'cmdline = %s\n' "${cmdline}"
-    } > "${cfg}"
-    rm -f "${cfg}.hw"
-
-    echo "==> ABL bootimg: zImage + initrd → boot/KERNEL" >&2
-    echo "  cmdline: ${cmdline}" >&2
+    copy_bootimg_hw_template "${template}" "${hw_cfg}"
 
     local ksize rsize max_boot need pagesize
-    pagesize="$(grep -E '^pagesize ' "${cfg}" | awk '{print $3}')"
+    pagesize="$(grep -E '^pagesize ' "${hw_cfg}" | awk '{print $3}')"
     pagesize="${pagesize:-2048}"
     ksize="$(stat -c%s "${zimage}")"
     rsize="$(stat -c%s "${initrd}")"
-    max_boot="$(grep -E '^bootsize ' "${cfg}" | awk '{print $3}')"
+    max_boot="$(grep -E '^bootsize ' "${hw_cfg}" | awk '{print $3}')"
     max_boot="${max_boot:-${BOOTIMG_MAX_BYTES:-82536448}}"
     need=$(( (ksize + pagesize - 1) / pagesize * pagesize + (rsize + pagesize - 1) / pagesize * pagesize + pagesize * 4 ))
     if [[ "${need}" -gt "${max_boot}" ]]; then
@@ -125,32 +152,26 @@ pack_bootimg_abl() {
         return 1
     fi
 
-    if ! abootimg --create "${kernel_out}" -f "${cfg}" -k "${zimage}" -r "${initrd}"; then
-        echo "ERROR: abootimg --create failed for ${kernel_out}" >&2
-        echo "  zImage: ${zimage} ($([[ -f "${zimage}" ]] && echo OK || echo MISSING))" >&2
-        echo "  initrd: ${initrd} ($([[ -f "${initrd}" ]] && echo OK || echo MISSING))" >&2
-        echo "  cfg:    ${cfg} ($([[ -f "${cfg}" ]] && echo OK || echo MISSING))" >&2
-        return 1
-    fi
-
-    [[ -s "${kernel_out}" ]] || {
-        echo "ERROR: ${kernel_out} empty after abootimg" >&2
+    echo "==> ABL bootimg: zImage + initrd → boot/KERNEL" >&2
+    echo "  cmdline: ${cmdline}" >&2
+    _write_abl_bootimg_cfg "${hw_cfg}" "${cmdline}" "${cfg}"
+    _create_abl_bootimg "${zimage}" "${initrd}" "${cfg}" "${kernel_out}" || return 1
+    abootimg -i "${kernel_out}" 2>&1 | grep -E 'kernel size|ramdisk size|cmdline' >&2 || true
+    assert_no_efi_devicetree "${cmdline}" || return 1
+    verify_unified_abl_cmdline "${cmdline}" || {
+        echo "KERNEL cmdline verify failed" >&2
         return 1
     }
 
-    local ks rs
-    abootimg -i "${kernel_out}" 2>&1 | grep -E 'kernel size|ramdisk size|cmdline' >&2 || true
+    rm -f "${hw_cfg}"
 
-    # Verify cmdline does not pin DTB via EFI
-    assert_no_efi_devicetree "${cmdline}" || return 1
-
-    write_output_install "${out_dir}" "${release}" "${uuid}"
+    write_output_install "${out_dir}" "${release}" "${sd_uuid:-}"
 
     echo "  → ${kernel_out} ($(du -h "${kernel_out}" | cut -f1))" >&2
     export MASI_BOOT_KERNEL="${kernel_out}"
 }
 
-# Repack boot/KERNEL with this device's root UUID + cmdline (fixes multi-device installs).
+# Repack boot/KERNEL with this device's masi.sdroot UUID (fixes multi-device SD cards).
 repack_bootimg_local_uuid() {
     local kernel_in="$1" kernel_out="${2:-$1}" release="${3:-}"
     local work uuid cmdline cfg zimage initrd
@@ -165,7 +186,7 @@ repack_bootimg_local_uuid() {
     resolve_root_uuid || return 1
     uuid="${RESOLVED_ROOT_UUID}"
 
-    cmdline="$(build_abl_cmdline "${uuid}")" || return 1
+    cmdline="$(build_unified_abl_cmdline "${uuid}")" || return 1
 
     work="$(mktemp -d)"
     (
@@ -199,7 +220,7 @@ repack_bootimg_local_uuid() {
     }
     rm -rf "${work}"
 
-    echo "  repack KERNEL: root UUID ${uuid} (this device)" >&2
+    echo "  repack KERNEL: masi.sdroot UUID ${uuid} (this device)" >&2
     echo "  cmdline: ${cmdline}" >&2
     export MASI_BOOT_KERNEL="${kernel_out}"
 }

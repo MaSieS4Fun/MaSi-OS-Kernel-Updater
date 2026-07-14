@@ -138,31 +138,38 @@ resolve_root_uuid() {
 
 build_abl_cmdline() {
     local uuid="${1:-}"
-    [[ -n "${uuid}" ]] || {
-        echo "Missing root UUID (read from ${BOOT_LINUXLOADER_CFG_PATH} or ${BOOT_KERNEL_PATH})" >&2
-        return 1
-    }
+    build_unified_abl_cmdline "${uuid}"
+}
 
-    # Match working LinuxLoader 6.18.8 baseline (no video=efifb:off — causes blue panel without HDMI).
+# One KERNEL for microSD and UFS ROCKNIX:
+#   SD:   root=UUID=<microSD> (works with rootwait)
+#   UFS:  initramfs switches to masi.ufsroot=PARTLABEL=STORAGE before mount
+build_unified_abl_cmdline() {
+    local sd_uuid="${1:-}"
+    local partlabel="${INTERNAL_ROOT_PARTLABEL:-STORAGE}"
     local -a parts=(
         "clk_ignore_unused"
         "pd_ignore_unused"
         "quiet"
         "rw"
         "rootwait"
-        "root=UUID=${uuid}"
     )
 
-    # Optional extras for legacy ABL — off by default (see docs/DISPLAY-BOOT.md).
-    if [[ "${ABL_CMDLINE_EXTRAS:-0}" == "1" ]]; then
-        parts+=("psi=0" "arm64.nopauth" "efi=noruntime" "video=efifb:off")
+    if [[ -n "${sd_uuid}" ]]; then
+        parts+=(
+            "root=UUID=${sd_uuid}"
+            "masi.ufsroot=PARTLABEL=${partlabel}"
+        )
+    else
+        parts+=("root=PARTLABEL=${partlabel}")
     fi
 
-    if [[ -n "${KERNEL_CMDLINE_EXTRA:-}" ]]; then
-        local extra
-        read -ra extra <<<"${KERNEL_CMDLINE_EXTRA}"
-        parts+=("${extra[@]}")
-    fi
+    parts+=(
+        "rootfstype=ext4"
+        "errors=remount-ro"
+    )
+
+    _append_abl_cmdline_extras parts
 
     local cmdline="${parts[*]}"
     if [[ "${cmdline}" == *"devicetree="* || "${cmdline}" == *"dtb="* ]]; then
@@ -170,4 +177,62 @@ build_abl_cmdline() {
         return 1
     fi
     printf '%s' "${cmdline}"
+}
+
+verify_unified_abl_cmdline() {
+    local cmdline="$1"
+    local partlabel="${INTERNAL_ROOT_PARTLABEL:-STORAGE}"
+
+    [[ -n "${cmdline}" ]] || return 1
+    [[ "${cmdline}" != *"devicetree="* && "${cmdline}" != *"dtb="* ]] || return 1
+
+    if [[ "${cmdline}" == *"root=UUID="* ]]; then
+        [[ "${cmdline}" == *"masi.ufsroot=PARTLABEL=${partlabel}"* ]] || return 1
+        return 0
+    fi
+
+    [[ "${cmdline}" == *"root=PARTLABEL=${partlabel}"* ]] || return 1
+    return 0
+}
+
+# Alias for UFS docs / legacy callers.
+build_internal_abl_cmdline() {
+    build_unified_abl_cmdline ""
+}
+
+verify_internal_abl_cmdline() {
+    verify_unified_abl_cmdline "$1"
+}
+
+# Shared optional cmdline tokens (debug, suspend, extras) for SD and UFS images.
+_append_abl_cmdline_extras() {
+    local -n _parts="$1"
+
+    if [[ "${ABL_CMDLINE_EXTRAS:-0}" == "1" ]]; then
+        _parts+=("psi=0" "arm64.nopauth" "efi=noruntime" "video=efifb:off")
+    fi
+
+    if [[ "${DEBUG_BOOTLOG:-0}" == "1" ]]; then
+        _parts+=(
+            "masi.bootlog=1"
+            "ignore_loglevel"
+            "loglevel=8"
+            "log_buf_len=2M"
+            "drm.debug=0x04"
+            "fw_devlink=0"
+        )
+    fi
+
+    if [[ "${SUSPEND_DEEP:-0}" == "1" ]]; then
+        _parts+=(
+            "mem_sleep_default=deep"
+            "ufshcd_core.uic_cmd_timeout=3000"
+        )
+    fi
+
+    if [[ -n "${KERNEL_CMDLINE_EXTRA:-}" ]]; then
+        local extra
+        read -ra extra <<<"${KERNEL_CMDLINE_EXTRA}"
+        _parts+=("${extra[@]}")
+    fi
 }

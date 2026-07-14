@@ -185,6 +185,25 @@ EOF
     install_fixup_backup_ownership "${backup_root}"
 }
 
+install_bootlog_service() {
+    local build="$1"
+
+    [[ -f "${build}/boot/DEBUG-BOOTLOG.txt" ]] || return 0
+    [[ -d /etc/systemd/system ]] || {
+        echo "  bootlog: no systemd — skip userspace capture service" >&2
+        return 0
+    }
+
+    mkdir -p /usr/lib/masi
+    install -m755 "${ROOT}/scripts/masi-bootlog-continue.sh" \
+        /usr/lib/masi/masi-bootlog-continue.sh
+    install -m644 "${ROOT}/config/masi-bootlog.service" \
+        /etc/systemd/system/masi-bootlog.service
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable masi-bootlog.service 2>/dev/null || true
+    echo "  bootlog: enabled masi-bootlog.service (appends to /boot/masi-boot.log)" >&2
+}
+
 install_from_build() {
     local build="$1" release modules_src firmware_src
     local kernel_src kernel_stage boot_stage
@@ -206,7 +225,12 @@ install_from_build() {
     kernel_stage="${boot_stage}/KERNEL"
     rm -rf "${OUTPUT_DIR}/.install-staging"
     mkdir -p "${boot_stage}"
-    cp -a "${build}/boot/." "${boot_stage}/"
+
+    # SD boot partition holds one KERNEL (~37 MiB). Same file is copied to UFS ROCKNIX on install/update.
+    local boot_extra f
+    for boot_extra in KERNEL KERNEL.md5 LinuxLoader.cfg DEBUG-BOOTLOG.txt masi-bootlog-continue.sh; do
+        [[ -f "${build}/boot/${boot_extra}" ]] && cp -a "${build}/boot/${boot_extra}" "${boot_stage}/"
+    done
 
     if [[ "${INSTALL_REPACK_KERNEL:-1}" == "1" ]]; then
         # shellcheck source=lib/cmdline.sh
@@ -230,7 +254,7 @@ install_from_build() {
     echo "  wiping ${INSTALL_BOOT_DST}/" >&2
     install_boot_is_vfat && echo "  (boot on FAT)" >&2
     _install_wipe_dir "${INSTALL_BOOT_DST}"
-    echo "  ${INSTALL_BOOT_DST}/ ← boot/ (KERNEL UUID for this device)" >&2
+    echo "  ${INSTALL_BOOT_DST}/ ← boot/KERNEL (SD + UFS ROCKNIX)" >&2
     _install_cp_tree "${boot_stage}" "${INSTALL_BOOT_DST}"
     sync "${INSTALL_BOOT_DST}" 2>/dev/null || sync
 
@@ -260,6 +284,21 @@ install_from_build() {
     } >> "${OUTPUT_DIR}/old_kernel/BACKUP.txt"
 
     install_fixup_backup_ownership "${OUTPUT_DIR}/old_kernel"
+
+    install_bootlog_service "${build}"
+
+    # shellcheck source=lib/audio-stack.sh
+    source "${ROOT}/lib/audio-stack.sh"
+    install_audio_stack "${release}"
+
+    # shellcheck source=lib/suspend.sh
+    source "${ROOT}/lib/suspend.sh"
+    install_deep_suspend_config
+
+    # shellcheck source=lib/ufs-install.sh
+    source "${ROOT}/lib/ufs-install.sh"
+    install_ufs_linux_scripts
+    update_internal_ufs_kernel "${kernel_stage}/KERNEL"
 
     echo "==> Install complete (${release})" >&2
 }
