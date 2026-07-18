@@ -113,7 +113,7 @@ kbuild_main() {
     _patch_set_matches_kernel_series "${kernel_ver}" "${patch_set}" || \
         die "Refusing linux-${kernel_ver} with ${patch_set} (requires sm8550-$(kernel_major_minor "${kernel_ver}"))."
     release="${kernel_ver}${KERNEL_LOCALVERSION}"
-    out_suffix="${OUTPUT_SUFFIX:-masi}"
+    out_suffix="${OUTPUT_SUFFIX:-kbase}"
     BUILD_OUT_DIR="${OUTPUT_DIR}/${release}-${out_suffix}"
     BUILD_RELEASE="${release}"
     BUILD_KERNEL_VER="${kernel_ver}"
@@ -152,6 +152,10 @@ kbuild_main() {
 
     finalize_output_layout "${BUILD_OUT_DIR}" "${BUILD_RELEASE}"
 
+    # shellcheck source=lib/fix-thor-screen.sh
+    source "${ROOT}/lib/fix-thor-screen.sh"
+    stage_fix_thor_screen "${BUILD_OUT_DIR}"
+
     if [[ "${BUILD_BOOTIMG:-1}" == "1" ]]; then
         pack_bootimg_abl "${BUILD_OUT_DIR}" "${BUILD_RELEASE}" || exit 1
     fi
@@ -166,6 +170,8 @@ kbuild_main() {
     log "  boot:     ${BUILD_OUT_DIR}/boot/KERNEL"
     log "  firmware: ${BUILD_OUT_DIR}/firmware/"
     log "  modules:  ${BUILD_OUT_DIR}/modules/${BUILD_RELEASE}/"
+    log "  Thor fix: ${BUILD_OUT_DIR}/fix-thor-screen/fix-thor.sh  (manual, asks root)"
+    log "  Gyro userspace: external project giroscopio (./install.sh) — not shipped here"
     log "  Install: sudo ./update.sh  or see INSTALL.txt"
 
     if [[ -t 0 && -t 1 && "${UI:-}" != "plain" ]]; then

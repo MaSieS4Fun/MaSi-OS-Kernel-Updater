@@ -18,8 +18,8 @@ Extracted from `armada-boot-partition/KERNEL` (works on all SM8550 units):
 | **3** | **Odin 2 Mini** |
 | **4** | **Thor** |
 | **5 / 6** | **Retroid Pocket 6** |
-| 7–8 | other handheld refs |
-| 9–12 | `qcom,qcs8550` generic fallbacks |
+| 7–8 | SM8650 refs (Pocket FIT, Pocket S2 — **wrong SoC** for this kernel) |
+| 9–13 | AYANEO Pocket ACE / DMG / DS / EVO / S 2K (SM8550 kbuild) |
 
 MaSi previously used `0=Odin2, 1=Mini, 2=Portal…` — **wrong index map**. ABL index 2 (Odin 2) received Portal’s DTB, index 3 (Mini) received Thor’s DTB, etc.
 

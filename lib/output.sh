@@ -3,12 +3,12 @@ set -euo pipefail
 
 build_artifact_dir() {
     local release="$1"
-    echo "${OUTPUT_DIR}/${release}-${OUTPUT_SUFFIX:-masi}"
+    echo "${OUTPUT_DIR}/${release}-${OUTPUT_SUFFIX:-kbase}"
 }
 
 build_staging_dir() {
     local release="$1"
-    echo "${OUTPUT_DIR}/.build/${release}-${OUTPUT_SUFFIX:-masi}"
+    echo "${OUTPUT_DIR}/.build/${release}-${OUTPUT_SUFFIX:-kbase}"
 }
 
 build_staging_dir_for() {
@@ -62,6 +62,13 @@ Or manually:
   cp -a firmware/* /usr/lib/firmware/
   cp -a modules/${release} /usr/lib/modules/
 
+AYN Thor (after reboot, KDE Plasma):
+  cd fix-thor-screen && ./fix-thor.sh
+
+AYN Thor / Odin 2 gyro userspace (external project; not in this bundle):
+  cd ~/Projects/giroscopio && ./install.sh
+  (kernel already includes FastRPC/SensorsPD DT + Thor ADSP firmware + CONFIG_UHID)
+
 Internal UFS install: same boot/KERNEL → ROCKNIX partition (no second image; see docs/INTERNAL-UFS-BOOT.md)
 
 Reboot after install.
@@ -113,6 +120,8 @@ EOF
     echo "  ${out_dir}/boot/KERNEL (SD + UFS ROCKNIX)" >&2
     echo "  ${out_dir}/firmware/" >&2
     echo "  ${out_dir}/modules/${release}/" >&2
+    echo "  ${out_dir}/fix-thor-screen/  (AYN Thor: ./fix-thor.sh — asks root)" >&2
+    echo "  (gyro userspace: ~/Projects/giroscopio — not staged here)" >&2
     echo "  (build tree: ${staging}/)" >&2
 }
 

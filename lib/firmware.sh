@@ -49,11 +49,15 @@ prepare_firmware_masi() {
 
     # shellcheck source=lib/audio-stack.sh
     source "${ROOT}/lib/audio-stack.sh"
+    # shellcheck source=lib/gyro-firmware.sh
+    source "${ROOT}/lib/gyro-firmware.sh"
+    stage_qcom_gyro_firmware "${fw_out}"
+
     if ! verify_audio_firmware_tree "${fw_out}"; then
         if [[ "${mode}" == "host" ]] && [[ -d "${fw_out}/qcom/sm8550" ]]; then
             echo "  WARNING: host firmware missing AYN ADSP — HDMI/DP audio may not work" >&2
         else
-            echo "ERROR: AYN ADSP firmware incomplete (need qcom/sm8550/ayn/*/adsp.mbn)" >&2
+            echo "ERROR: AYN ADSP firmware incomplete (need qcom/sm8550/ayn/*/adsp.mbn or thor adsp.mdt)" >&2
             return 1
         fi
     else

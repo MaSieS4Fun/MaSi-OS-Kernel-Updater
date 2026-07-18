@@ -98,11 +98,27 @@ _firmware_stage_copy() {
 
     local ayn="${dest}/qcom/sm8550/ayn"
     if [[ -d "${ayn}/odin2" ]]; then
-        for dev in odin2mini odin2portal thor; do
+        # mini/portal share Odin 2 ADSP. Thor gets its own SH5001 overlay later
+        # (must not be a symlink to odin2).
+        for dev in odin2mini odin2portal; do
             [[ -e "${ayn}/${dev}" ]] || ln -sfn odin2 "${ayn}/${dev}"
         done
+        if [[ -L "${ayn}/thor" ]]; then
+            rm -f "${ayn}/thor"
+        fi
     elif [[ ! -f "${ayn}/odin2/adsp.mbn" ]]; then
         echo "  WARNING: no qcom/sm8550/ayn/odin2 in firmware checkout" >&2
+    fi
+
+    # AYANEO Pocket SM8550 boards share AYN Odin2 ADSP firmware blobs under ayaneo/.
+    local ayaneo="${dest}/qcom/sm8550/ayaneo"
+    if [[ ! -e "${ayaneo}" && -d "${ayn}/odin2" ]]; then
+        ln -sfn ayn/odin2 "${ayaneo}"
+        echo "  + qcom/sm8550/ayaneo -> ayn/odin2" >&2
+    elif [[ -d "${ayaneo}" && ! -f "${ayaneo}/adsp.mbn" && -f "${ayn}/odin2/adsp.mbn" ]]; then
+        ln -sfn "../ayn/odin2/adsp.mbn" "${ayaneo}/adsp.mbn"
+        ln -sfn "../ayn/odin2/adsp_dtb.mbn" "${ayaneo}/adsp_dtb.mbn"
+        echo "  + qcom/sm8550/ayaneo/{adsp,adsp_dtb}.mbn -> ayn/odin2" >&2
     fi
 
     local n

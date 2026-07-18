@@ -12,7 +12,7 @@ source "${ROOT}/lib/verify-build.sh"
 
 out="${BUILD_OUT_DIR:-}"
 if [[ -z "${out}" ]]; then
-    out="$(find "${OUTPUT_DIR:-${ROOT}/output}" -maxdepth 1 -type d -name '*-masi' 2>/dev/null | sort -V | tail -1)"
+    out="$(find "${OUTPUT_DIR:-${ROOT}/output}" -maxdepth 1 -type d -name "*-${OUTPUT_SUFFIX:-kbase}" 2>/dev/null | sort -V | tail -1)"
 fi
 [[ -n "${out}" && -d "${out}" ]] || { echo "No build in output/"; exit 1; }
 rel="$(basename "$(find "${out}/modules" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)")"

@@ -81,9 +81,14 @@ apply_armbian_patches() {
 
     if [[ -f "${stamp}" ]]; then
         apply_masi_extra_dts "${src_dir}"
+        apply_masi_ayaneo_dts "${src_dir}" || true
         apply_masi_haptics_dtsi "${src_dir}" || true
+        apply_masi_thor_touch_dts "${src_dir}" || true
+        apply_masi_gyro_fastrpc_dts "${src_dir}" || true
         apply_masi_kernel_patches "${src_dir}" || true
         verify_masi_haptics_stack "${src_dir}" || return 1
+        verify_masi_thor_touch_dts "${src_dir}" || return 1
+        verify_masi_gyro_fastrpc_dts "${src_dir}" || return 1
         echo "==> Patches ${patch_set} already applied (linux-${kernel_ver})" >&2
         return 0
     fi
@@ -122,9 +127,14 @@ apply_armbian_patches() {
     echo "==> Ensuring AYN device tree patches..." >&2
     _apply_pending_ayn_dtb_patches "${src_dir}" "${patch_dir}" || true
     apply_masi_extra_dts "${src_dir}" || true
+    apply_masi_ayaneo_dts "${src_dir}" || failed=1
     apply_masi_haptics_dtsi "${src_dir}" || failed=1
+    apply_masi_thor_touch_dts "${src_dir}" || failed=1
+    apply_masi_gyro_fastrpc_dts "${src_dir}" || failed=1
     apply_masi_kernel_patches "${src_dir}" || failed=1
         verify_masi_thor_panel_reset "${src_dir}" || failed=1
+        verify_masi_thor_touch_dts "${src_dir}" || failed=1
+        verify_masi_gyro_fastrpc_dts "${src_dir}" || failed=1
         verify_masi_haptics_stack "${src_dir}" || failed=1
         verify_masi_suspend_stack "${src_dir}" || failed=1
         _verify_masi_dtb_sources "${src_dir}" || failed=1
@@ -184,6 +194,217 @@ apply_masi_haptics_dtsi() {
     ' "${dtsi}" > "${tmp}"
     mv "${tmp}" "${dtsi}"
     echo "  OK   MaSi qcs8550-ayn-common haptics DT" >&2
+}
+
+# ADSP FastRPC SensorsPD + remote heap for Qualcomm Sensor Core gyro (AYN SM8550).
+# Common: heap + PDR only. Thor: also qcom,pd-type banks (Batocera layout).
+apply_masi_gyro_fastrpc_dts() {
+    local src_dir="$1"
+    local frag="${ROOT}/patches/masi/qcs8550-ayn-gyro-fastrpc.dtsi.frag"
+    local thor_frag="${ROOT}/patches/masi/qcs8550-ayn-thor-gyro-fastrpc-pd.dtsi.frag"
+    local dtsi="${src_dir}/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi"
+    local thor="${src_dir}/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts"
+
+    [[ -f "${frag}" ]] || return 0
+
+    if [[ -f "${dtsi}" ]]; then
+        if grep -q 'qcom,fastrpc-adsp-sensors-pdr' "${dtsi}"; then
+            # Migrate older common frags that forced pd-type on all AYN boards.
+            if grep -qE 'qcom,pd-type\s*=' "${dtsi}"; then
+                python3 - "${dtsi}" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+# Drop compute-cb pd-type overrides from the MaSi gyro block only.
+text2 = re.sub(
+    r"\n\t\tcompute-cb@[0-9]+ \{[^}]*qcom,pd-type[^}]*\};\n",
+    "\n",
+    text,
+    flags=re.S,
+)
+if text2 != text:
+    open(path, "w", encoding="utf-8").write(text2)
+    print("  OK   stripped PD-type from common DT (Odin2-safe)", file=__import__("sys").stderr)
+else:
+    print("  SKIP common PD-type strip (no compute-cb overrides matched)", file=__import__("sys").stderr)
+PY
+            else
+                echo "  SKIP MaSi gyro FastRPC DT (already present)" >&2
+            fi
+        else
+            cat "${frag}" >> "${dtsi}"
+            echo "  OK   MaSi gyro FastRPC DT (common heap+PDR)" >&2
+        fi
+    fi
+
+    if [[ -f "${thor}" && -f "${thor_frag}" ]]; then
+        if ! grep -qE 'qcom,pd-type\s*=' "${thor}"; then
+            cat "${thor_frag}" >> "${thor}"
+            echo "  OK   Thor FastRPC PD-type banks" >&2
+        else
+            echo "  SKIP Thor FastRPC PD-type (already present)" >&2
+        fi
+    fi
+
+    # Thor stock Android ADSP with SH5001 is split ELF (.mdt + .bXX), not .mbn.
+    if [[ -f "${thor}" ]] && grep -q 'ayn/thor/adsp\.mbn' "${thor}"; then
+        sed -i \
+            -e 's|qcom/sm8550/ayn/thor/adsp\.mbn|qcom/sm8550/ayn/thor/adsp.mdt|g' \
+            -e 's|qcom/sm8550/ayn/thor/adsp_dtb\.mbn|qcom/sm8550/ayn/thor/adsp_dtb.mdt|g' \
+            "${thor}"
+        echo "  OK   Thor ADSP firmware-name → adsp.mdt (SH5001)" >&2
+    fi
+
+    return 0
+}
+
+verify_masi_gyro_fastrpc_dts() {
+    local src_dir="$1"
+    local dtsi="${src_dir}/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi"
+    local thor="${src_dir}/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts"
+
+    [[ -f "${dtsi}" ]] || return 0
+
+    echo "==> Verify gyro FastRPC DT" >&2
+    if ! grep -q 'qcom,fastrpc-adsp-sensors-pdr' "${dtsi}"; then
+        echo "  FAIL missing qcom,fastrpc-adsp-sensors-pdr in common DT" >&2
+        return 1
+    fi
+    if ! grep -q 'adsp_rpc_remote_heap_mem' "${dtsi}"; then
+        echo "  FAIL missing adsp_rpc_remote_heap_mem" >&2
+        return 1
+    fi
+    if grep -qE 'qcom,pd-type\s*=' "${dtsi}"; then
+        echo "  FAIL common DT still forces qcom,pd-type (Odin2 must use first-free CBs)" >&2
+        return 1
+    fi
+    if [[ -f "${thor}" ]]; then
+        if ! grep -q 'ayn/thor/adsp\.mdt' "${thor}"; then
+            echo "  FAIL Thor still points at adsp.mbn (need .mdt for SH5001)" >&2
+            return 1
+        fi
+        if ! grep -qE 'qcom,pd-type\s*=' "${thor}"; then
+            echo "  FAIL Thor missing qcom,pd-type FastRPC banks" >&2
+            return 1
+        fi
+    fi
+    echo "  OK   SensorsPD PDR + Thor pd-type/adsp.mdt" >&2
+    return 0
+}
+
+# Thor main (top) AMOLED touch: Armbian DT omits axis remap; bottom panel already has it.
+apply_masi_thor_touch_dts() {
+    local src_dir="$1"
+    local dts="${src_dir}/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts"
+
+    [[ -f "${dts}" ]] || return 0
+
+    python3 - "${dts}" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+changed = False
+
+
+def patch_touch_node(lines, compatible, prop_lines):
+    global changed
+    key = f'compatible = "{compatible}"'
+    for i, line in enumerate(lines):
+        if key not in line:
+            continue
+        end = i + 1
+        while end < len(lines) and not re.match(r"\t\};", lines[end]):
+            end += 1
+        if end >= len(lines):
+            return lines
+        block = "".join(lines[i : end + 1])
+        to_insert = []
+        for prop in prop_lines:
+            needle = prop.strip().rstrip(";")
+            if needle in block:
+                continue
+            to_insert.append(prop if prop.endswith("\n") else prop + "\n")
+        if to_insert:
+            lines[end:end] = to_insert
+            changed = True
+        return lines
+    return lines
+
+
+lines = patch_touch_node(
+    lines,
+    "focaltech,ft5426",
+    [
+        "\t\ttouchscreen-swapped-x-y;\n",
+        "\t\ttouchscreen-inverted-x;\n",
+        '\t\tlabel = "top_touchscreen";\n',
+    ],
+)
+lines = patch_touch_node(
+    lines,
+    "focaltech,ft5452",
+    [
+        "\t\tedt,retain-power-in-suspend;\n",
+        '\t\tlabel = "bottom_touchscreen";\n',
+    ],
+)
+
+text = "".join(lines)
+if not re.search(
+    r'compatible\s*=\s*"focaltech,ft5426"[\s\S]{0,800}?touchscreen-swapped-x-y',
+    text,
+):
+    sys.stderr.write("MaSi Thor touch: ft5426 missing axis remap\n")
+    sys.exit(1)
+
+if changed:
+    open(path, "w", encoding="utf-8").write(text)
+
+sys.exit(0)
+PY
+
+    echo "  OK   MaSi Thor touch DTS (labels, axis remap, retain-power)" >&2
+}
+
+# Back-compat alias for scripts/docs that still reference the old hook name.
+apply_masi_thor_top_touch_orientation() {
+    apply_masi_thor_touch_dts "$@"
+}
+
+verify_masi_thor_touch_dts() {
+    local src_dir="$1"
+    local dts="${src_dir}/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts"
+
+    [[ -f "${dts}" ]] || return 0
+
+    echo "==> Verify Thor touch DTS" >&2
+
+    if ! awk '
+        /compatible = "focaltech,ft5426"/ { in_top=1; ok_top=0 }
+        in_top && /touchscreen-swapped-x-y/ { ok_top=1 }
+        in_top && /touchscreen-inverted-x/ { ok_top=1 }
+        in_top && /label = "top_touchscreen"/ { lbl_top=1 }
+        in_top && /^[[:space:]]*\};[[:space:]]*$/ { in_top=0 }
+        /compatible = "focaltech,ft5452"/ { in_bot=1; ok_bot=0 }
+        in_bot && /edt,retain-power-in-suspend/ { ok_bot=1 }
+        in_bot && /label = "bottom_touchscreen"/ { lbl_bot=1 }
+        in_bot && /^[[:space:]]*\};[[:space:]]*$/ { in_bot=0 }
+        END {
+            exit((ok_top && ok_bot && lbl_top && lbl_bot) ? 0 : 1)
+        }
+    ' "${dts}"; then
+        echo "  FAIL Thor touch DTS incomplete (top remap/label or bottom retain-power/label)" >&2
+        return 1
+    fi
+
+    echo "  OK   top_touchscreen + bottom_touchscreen nodes" >&2
+    return 0
+}
+
+verify_masi_thor_top_touch_orientation() {
+    verify_masi_thor_touch_dts "$@"
 }
 
 ensure_masi_suspend_patches() {
@@ -448,6 +669,7 @@ apply_masi_kernel_patches() {
     shopt -u nullglob
     echo "==> MaSi patches: ${applied} ok, ${skipped} skip, ${failed} fail" >&2
     verify_masi_suspend_stack "${src_dir}" || failed=1
+    verify_masi_dp_audio_patches "${src_dir}" || failed=1
     [[ "${failed}" -eq 0 ]]
 }
 
@@ -823,6 +1045,35 @@ verify_masi_thor_panel_reset() {
     return 1
 }
 
+verify_masi_dp_audio_patches() {
+    local src_dir="$1"
+    local drm="${src_dir}/drivers/gpu/drm/display/drm_hdmi_audio_helper.c"
+    local q6apm="${src_dir}/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c"
+    local failed=0
+
+    [[ -f "${drm}" && -f "${q6apm}" ]] || return 0
+
+    echo "==> Verify DP/HDMI audio patch stack" >&2
+
+    if grep -A8 'drm_connector_hdmi_audio_ops' "${drm}" | grep -q '\.hw_params = drm_connector_hdmi_audio_prepare'; then
+        echo "  OK   drm_hdmi_audio: hw_params → DP prepare" >&2
+    else
+        echo "  FAIL drm_hdmi_audio missing .hw_params callback" >&2
+        failed=1
+    fi
+
+    if grep -q 'q6apm_lpass_dai_trigger' "${q6apm}" \
+        && grep -A6 'q6hdmi_ops' "${q6apm}" | grep -q '\.trigger.*q6apm_lpass_dai_trigger' \
+        && ! grep -A20 'q6apm_lpass_dai_prepare' "${q6apm}" | grep -q 'q6apm_graph_start'; then
+        echo "  OK   q6apm-lpass-dais: graph start on trigger" >&2
+    else
+        echo "  FAIL q6apm-lpass-dais missing trigger-based graph start" >&2
+        failed=1
+    fi
+
+    [[ "${failed}" -eq 0 ]]
+}
+
 verify_masi_haptics_stack() {
     local src_dir="$1"
     local rsinput="${src_dir}/drivers/input/joystick/rsinput.c"
@@ -861,6 +1112,50 @@ verify_masi_haptics_stack() {
     fi
 
     [[ "${failed}" -eq 0 ]]
+}
+
+
+# AYANEO SM8550 Pocket family (ACE/DMG/DS/EVO/S 2K) — Armbian sm8550-6.18 DTS + MaSi S1.
+apply_masi_ayaneo_dts() {
+    local src_dir="$1"
+    local src="${ROOT}/patches/masi/ayaneo"
+    local qcom="${src_dir}/arch/arm64/boot/dts/qcom"
+    local mk="${qcom}/Makefile"
+    local f dtb
+
+    [[ -d "${src}" && -f "${mk}" ]] || return 0
+
+    for f in \
+        qcs8550-ayaneo-pocket-common.dtsi \
+        qcs8550-ayaneo-pocketace.dts \
+        qcs8550-ayaneo-pocketdmg.dts \
+        qcs8550-ayaneo-pocketds.dts \
+        qcs8550-ayaneo-pocketevo.dts \
+        qcs8550-ayaneo-pockets1.dts
+    do
+        [[ -f "${src}/${f}" ]] || {
+            echo "ERROR: missing ${src}/${f}" >&2
+            return 1
+        }
+        cp -f "${src}/${f}" "${qcom}/${f}"
+    done
+
+    for dtb in \
+        qcs8550-ayaneo-pocketace.dtb \
+        qcs8550-ayaneo-pocketdmg.dtb \
+        qcs8550-ayaneo-pocketds.dtb \
+        qcs8550-ayaneo-pocketevo.dtb \
+        qcs8550-ayaneo-pockets1.dtb
+    do
+        if ! grep -q "${dtb}" "${mk}"; then
+            if grep -q 'qcs8550-retroidpocket-rp6\.dtb' "${mk}"; then
+                sed -i "/qcs8550-retroidpocket-rp6\.dtb/a dtb-\$(CONFIG_ARCH_QCOM) += ${dtb}" "${mk}"
+            else
+                _ensure_dtb_in_makefile "${mk}" "${dtb}"
+            fi
+        fi
+    done
+    echo "  OK   MaSi AYANEO Pocket ACE/DMG/DS/EVO/S1 DTS" >&2
 }
 
 # Retroid Pocket 6 DTB — public DTS (LineageOS kernel-ack, adapted for Armbian ayn-common).
@@ -934,9 +1229,11 @@ apply_ayn_family_kconfig() {
         DRM_PANEL_SYNAPTICS_TD4328 DRM_PANEL_BOE_XM91080G \
         DRM_PANEL_CHIPONE_ICNA3512 DRM_PANEL_CHIPONE_ICNA35XX \
         DRM_PANEL_DDIC_CH13726A \
+        DRM_PANEL_AR06_4INCH DRM_PANEL_AR02_3INCH DRM_PANEL_AR11_5INCH \
+        DRM_PANEL_RENESAS_R63419 \
         TOUCHSCREEN_HYNITRON_CSTXXX TOUCHSCREEN_HYNITRON_ALL \
         TOUCHSCREEN_FOCALTECH_FT5426 TOUCHSCREEN_FOCALTECH_FT5X06 \
-        TOUCHSCREEN_EDT_FT5X06 \
+        TOUCHSCREEN_EDT_FT5X06 TOUCHSCREEN_GOODIX RMI4_CORE RMI4_I2C RMI4_F12 \
         BACKLIGHT_ODIN2MINI BACKLIGHT_SY7758 \
         DRM_PANEL_RETROID_POCKET_6 \
         JOYSTICK_RSINPUT LEDS_HTR3212 INPUT_FF_MEMLESS \

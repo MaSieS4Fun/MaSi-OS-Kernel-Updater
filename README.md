@@ -1,165 +1,142 @@
 # MaSi-OS Kernel Updater
 
-Build and install a **performance-tuned** Linux kernel for Qualcomm **SM8550** handhelds (AYN Odin 2, Mini, Portal, Thor, Retroid Pocket 6, …) on **Armbian**, packaged as an ABL **`boot/KERNEL`** bootimg.
+SM8550 gaming kernel for AYN / Retroid / AYANEO handhelds, packaged as a
+ROCKNIX-ABL **`boot/KERNEL`** bootimg — with **strict multi-device install**.
 
-Repository: **https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater**
+**GitHub:** [MaSieS4Fun/MaSi-OS-Kernel-Updater](https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater)
 
----
+Local checkouts may appear as `kernel-new-base` or `Kernel_MaSi-OS`: that is the
+**same project**, split only for compatibility while developing. Releases and
+docs target the single GitHub repository above.
 
-## Features
-
-- Recompiles kernel with **`config/golden.config`** (gaming scheduler, storage, PSI off)
-- **11-DTB ABL chain** — all slots compiled from kernel source
-- **Firmware** — downloaded from public Armbian firmware git
-- **Initrd** — built locally (`efi-clean`); no copy from other images
-- **Gaming cmdline** — matches working LinuxLoader 6.18.8 (no `video=efifb:off` by default)
-- **Cmdline UUID** — from `/boot/LinuxLoader.cfg` or `/boot/KERNEL` on the system
-- **Initrd** — built locally (`efi-clean`); optional `INITRAMFS_PROFILE=gold` uses `reference/` only
-- **`update.sh`** — backup, clean install to `/boot`, firmware, modules, **ADSP/audio stack**, **deep suspend**, optional reboot
-
----
-
-## Supported devices
-
-| Device | Notes |
-|--------|--------|
-| AYN Odin 2 / Mini / Portal / Thor | slots 0–3 (+ alts); set **ABL → device model** |
-| Retroid Pocket 6 | slots 4 / 9 (`patches/masi/`) |
-
-In ROCKNIX-ABL: **Set the Device** to your exact model (Mini ≠ Odin 2). Do **not** use `devicetree=` in cmdline.
-
----
-
-## Autonomous build (no other Linux image required)
-
-| Component | Public source |
-|-----------|----------------|
-| Kernel | [kernel.org](https://kernel.org) CDN |
-| Patches | [Armbian build](https://github.com/armbian/build) + `patches/masi/` (RP6 DTS) |
-| DTBs | Compiled from kernel (`config/dtb-chain.map`) |
-| Firmware | [armbian/firmware](https://github.com/armbian/firmware) git (`FIRMWARE_SOURCE=download`) |
-| Initrd | Built with `mkinitramfs` (`INITRAMFS_PROFILE=efi-clean`) |
-| Bootimg layout | `config/bootimg.abl.cfg` (in repo) |
-| Root UUID | **`/boot/LinuxLoader.cfg`** or **`/boot/KERNEL`** on the system you update |
-
-Fresh clone on a handheld with your preconfigured `/boot/`:
+## Quick start
 
 ```bash
-git clone https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater.git
-cd MaSi-OS-Kernel-Updater
-sudo apt install build-essential libssl-dev libncurses-dev libelf-dev \
-  flex bison bc curl patch initramfs-tools busybox-static abootimg python3 u-boot-tools \
-  git device-tree-compiler
 ./make.sh
-sudo ./update.sh
+sudo ./update.sh                # on EACH device before reboot
 ```
 
-No ROCKNIX, ARMADA, or ostree image needed for the build itself.
+Output: `output/<version>-edge-sm8550-kbase/` (or the suffix set in `config/`)
 
-### Requirements
+## Why strict install
 
-Build on the handheld or an Armbian SM8550 chroot:
+Install **fails closed** if it cannot embed **this SD’s** `root=UUID=`:
 
-```bash
-sudo apt install build-essential libssl-dev libncurses-dev libelf-dev \
-  flex bison bc curl patch initramfs-tools busybox-static abootimg python3 u-boot-tools git
-```
+- Preflight checks SoC + ABL hints before install
+- Post-install verifies KERNEL cmdline
+- Docs: [`docs/ARRANQUE-SEGURO.md`](docs/ARRANQUE-SEGURO.md)
 
-You need **`/boot/LinuxLoader.cfg`** or **`/boot/KERNEL`** on the device (for `root=UUID=` only — not for DTBs/firmware/initrd).
+## ABL (mandatory)
 
-### Build (after requirements)
+Vol Down → **Set the Device** → exact model → Linux → START.
 
-```bash
-./make.sh                              # interactive version menu (only kernels with Armbian sm8550-* patches)
-KERNEL_VER=7.0.14 ./make.sh            # non-interactive
-KERNEL_VER=7.0.14 BUILD_COMPILE=0 ./make.sh   # repack only (no recompile)
-```
+Wrong model (Odin 2 vs Mini) = black screen **before** Linux.  
+Bootloader: [ROCKNIX-ABL](https://github.com/ROCKNIX/abl).
 
-**linux-7.1.x** appears in the menu only when Armbian publishes **`sm8550-7.1`** (no cross-series fallback to `sm8550-7.0`).
-
-### Install
+## UFS internal
 
 ```bash
 sudo ./update.sh
+sudo masi-install-to-ufs
+# First UFS boot: remove microSD
 ```
 
-Backs up the running system to `output/old_kernel/` (owned by your user), then installs `boot/KERNEL` (microSD UUID), firmware, modules, and the **Qualcomm ADSP/audio stack**.
+See [`docs/INTERNAL-UFS-BOOT.md`](docs/INTERNAL-UFS-BOOT.md).
 
-Internal UFS dual-boot: **[docs/INTERNAL-UFS-BOOT.md](docs/INTERNAL-UFS-BOOT.md)**
+## Device extras (after `./update.sh` + reboot)
 
-After `update.sh`: `sudo masi-install-to-ufs` (scripts installed to `/usr/lib/masi/ufs-linux/`)
-
-HDMI / USB-C DisplayPort audio: **[docs/HDMI-DP-AUDIO.md](docs/HDMI-DP-AUDIO.md)**
+| Device | Extra |
+|--------|--------|
+| **AYN Thor** touch / dual panel | `output/.../fix-thor-screen/./fix-thor.sh` — [`docs/THOR-TOUCH.md`](docs/THOR-TOUCH.md) |
+| **Odin 2 / Thor** gyro userspace | External project **`giroscopio`** → `./install.sh` (kernel already ships FastRPC/SensorsPD + Thor ADSP firmware + `CONFIG_UHID`) — [`docs/GYRO.md`](docs/GYRO.md) |
 
 ---
 
-## Output layout
+## Sources & credits
+
+This kernel is assembled from public upstream work. **Full attribution and
+“what we took from each”:** [`CREDITS.md`](CREDITS.md).
+
+### This project
+
+| Project | Link |
+|---------|------|
+| MaSi-OS Kernel Updater | https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater |
+
+### Kernel, patches, firmware
+
+| Project | Link | Role here |
+|---------|------|-----------|
+| Linux kernel | https://www.kernel.org · [CDN](https://cdn.kernel.org/pub/linux/kernel) | Vanilla sources compiled by `./make.sh` |
+| Armbian build | https://github.com/armbian/build | SM8550 patch archive (`sm8550-7.0`, …) — AYN boards, SoC, rsinput, panels |
+| Armbian firmware | https://github.com/armbian/firmware | Firmware tree staged into `output/.../firmware/` |
+
+### Boot / multi-device / suspend
+
+| Project | Link | Role here |
+|---------|------|-----------|
+| ROCKNIX | https://github.com/ROCKNIX/distribution | ABL KERNEL model, UFS install pattern, AYANEO DTS |
+| ROCKNIX PR #2952 | https://github.com/ROCKNIX/distribution/pull/2952 | Deep-suspend UFS/wake patches → `patches/masi/1006`–`1013` |
+| ROCKNIX-ABL | https://github.com/ROCKNIX/abl | Device index → DTB chain slot |
+| ARMADA (reference) | community SM8550 image | Reference 14-slot DTB chain (`reference/`, `device-tree/vendored/`) |
+
+### Gyro (kernel) & Thor touch
+
+| Project | Link | Role here |
+|---------|------|-----------|
+| Batocera.linux | https://github.com/batocera-linux/batocera.linux · [AYN wiki](https://wiki.batocera.org/hardware:ayn) | Sensor Core / FastRPC DT conventions (Odin 2 & Thor) |
+| Batocera Custom ARM (suckbluefrog) | https://github.com/suckbluefrog/Batocera-Custom-Arm-Builds | FastRPC SensorsPD + Thor PD-type DT adapted in MaSi gyro patches |
+| thorch-os / thorch | https://github.com/thorch-os/thorch | Thor touch udev + KWin map → `fix-thor-screen` |
+
+### Boards / panels (overlays)
+
+| Project / author | Link or note | Role here |
+|------------------|--------------|-----------|
+| LineageOS AYN `kernel-ack` | public `android_kernel_ayn_kernel-ack` | Retroid Pocket 6 DTS → `qcs8550-retroidpocket-rp6.dts` |
+| Teguh Sobirin / ROCKNIX | https://github.com/ROCKNIX | AYANEO Pocket DTS under `patches/masi/ayaneo/` |
+| Philippe Simons | panel patch authorship | Pocket DMG / DS panel drivers (`1020`, `1021`) |
+| Qualcomm / Linux Foundation | HV haptics copyright in-driver | `qcom-hv-haptics` + AYN haptics DT fragment |
+
+### Companion (userspace, not built by this repo)
+
+| Project | Role |
+|---------|------|
+| **giroscopio** | Motion DSU + DualSense UHID + Steam Game Mode pad switch |
+
+---
+
+## Config
+
+- `config/defaults.conf` — build defaults (`OUTPUT_SUFFIX=kbase`, `INSTALL_STRICT=1`)
+- `config/local.conf` — optional overrides (copy from `config/local.conf.example`)
+
+## Structure
 
 ```
-output/
-├── <ver>-edge-sm8550-masi/          # install bundle
-│   ├── boot/KERNEL
-│   ├── firmware/
-│   ├── modules/<release>/
-│   ├── INSTALL.txt
-│   └── MANIFEST.txt
-├── .build/<ver>-edge-sm8550-masi/   # Image, zImage, initrd (intermediate)
-├── meta/config-<release>            # kernel .config reference
-└── old_kernel/                      # backup after update.sh
+.
+  make.sh          compile kernel + boot/KERNEL
+  update.sh        install on this device (strict UUID repack)
+  CREDITS.md       full upstream attribution
+  config/          dtb-chain, golden.config, defaults
+  lib/             build + install logic
+  patches/masi/    post-Armbian overlays (haptics, suspend, gyro, Thor, AYANEO…)
+  payload/         fix-thor-screen (touch) — staged into output/
+  reference/       ARMADA DTB chain blobs
+  hooks/           initramfs (dual-root SD/UFS)
+  scripts/         preflight, verify, ufs-linux, ROCKNIX suspend fetch
+  vendor/qcom-gyro firmware-thor-adsp (ADSP overlay for Thor gyro)
 ```
 
----
+## Debug black screen
 
-## Why not a stock / repacked kernel?
+```bash
+DEBUG_BOOTLOG=1 ./make.sh
+sudo ./update.sh
+```
 
-Standard SM8550 builds often lose **40–50% gaming FPS** once USB, Wi‑Fi, and audio are active. That is usually **standard vs performance tuning** (kernel options, cmdline, governors) — not “drivers are slow”.
-
-Read: **[docs/GAMING-PERFORMANCE.md](docs/GAMING-PERFORMANCE.md)**  
-Kernel checklist: **[docs/KCONFIG-REQUIREMENTS.md](docs/KCONFIG-REQUIREMENTS.md)**  
-All docs: **[docs/README.md](docs/README.md)**
-
----
-
-## Configuration
-
-Defaults live in `config/defaults.conf`. Copy `config/defaults.conf.example` → `config/local.conf` for overrides (local.conf is gitignored).
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `GAMING_TUNING` | `1` | Golden kconfig overrides |
-| `INITRAMFS_PROFILE` | `gold` | Small initrd for ABL |
-| `KERNEL_LOCALVERSION` | `-edge-sm8550` | Module directory name |
-| `PATCH_POLICY` | `strict` | `tolerant` = ignore patch failures (not recommended) |
-| `BUILD_COMPILE` | `1` | `0` = repack only |
-
----
-
-## Documentation
-
-| Doc | Topic |
-|-----|--------|
-| [GAMING-PERFORMANCE.md](docs/GAMING-PERFORMANCE.md) | Standard vs performance; golden config & initrd |
-| [DISPLAY-BOOT.md](docs/DISPLAY-BOOT.md) | Blue/black screen, ROCKNIX ABL, UUID per device |
-| [HDMI-DP-AUDIO.md](docs/HDMI-DP-AUDIO.md) | USB-C DP / HDMI dock audio (ADSP firmware + modules) |
-| [INTERNAL-UFS-BOOT.md](docs/INTERNAL-UFS-BOOT.md) | Dual-boot microSD + internal UFS (one KERNEL) |
-| [SUSPEND.md](docs/SUSPEND.md) | Deep sleep / UFS resume (ROCKNIX PR #2952 patches) |
-| [THOR-DISPLAY.md](docs/THOR-DISPLAY.md) | Thor bottom panel + touch rotation |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Build pipeline |
-| [DTB-ABL.md](docs/DTB-ABL.md) | Multidevice ABL boot |
-| [GITHUB-SETUP.md](docs/GITHUB-SETUP.md) | Publish or push updates to GitHub |
-| [reference/README.md](reference/README.md) | Initrd gold profile setup |
-
----
-
-## Related work
-
-This repo **compiles** a gaming kernel. Other projects **repack** stock vendor zImages without recompiling — useful for comparison, different goal.
-
-See [docs/PROJECTS.md](docs/PROJECTS.md).
-
----
+See [`docs/DEBUG-BOOTLOG.md`](docs/DEBUG-BOOTLOG.md).
 
 ## License
 
-Scripts and documentation: [MIT](LICENSE).  
-Built kernel, modules, and firmware: **GPL-2.0** and upstream licenses.
+Build/packaging scripts: MIT (`LICENSE`).  
+Produced kernel/modules/firmware: GPL-2.0 and upstream licenses (kernel.org, Armbian, etc.).

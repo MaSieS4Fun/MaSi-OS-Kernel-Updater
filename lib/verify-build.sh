@@ -119,6 +119,13 @@ verify_build_output() {
     }
     echo "  OK  audio modules (ADSP + SC8280XP + QDSP6)" >&2
 
+    # shellcheck source=lib/fix-thor-screen.sh
+    source "${ROOT}/lib/fix-thor-screen.sh"
+    verify_fix_thor_screen_bundle "${out_dir}" || {
+        rm -rf "${work}"
+        return 1
+    }
+
     rm -rf "${work}"
     echo "==> verify-build PASSED" >&2
     return 0

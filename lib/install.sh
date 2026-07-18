@@ -57,7 +57,7 @@ install_list_builds() {
     local d base rel
     install_list_builds_result=()
     shopt -s nullglob
-    for d in "${OUTPUT_DIR}"/*-masi/; do
+    for d in "${OUTPUT_DIR}"/*-"${OUTPUT_SUFFIX:-kbase}"/; do
         base="$(basename "${d}")"
         [[ "${base}" == "old_kernel" || "${base}" == "meta" || "${base}" == ".build" ]] && continue
         [[ -f "${d}/boot/KERNEL" ]] || continue
@@ -84,6 +84,15 @@ install_fixup_backup_ownership() {
     else
         echo "  backup ownership fixed for invoking user" >&2
     fi
+}
+
+# Temporary UUID-repack tree under output/. Always remove after install (success or fail)
+# so a normal user is not left with a root-owned leftover.
+install_cleanup_staging() {
+    local staging="${OUTPUT_DIR}/.install-staging"
+    [[ -e "${staging}" ]] || return 0
+    rm -rf "${staging}"
+    echo "  cleaned output/.install-staging" >&2
 }
 
 install_pick_build() {
@@ -223,6 +232,9 @@ install_from_build() {
     kernel_src="${build}/boot/KERNEL"
     boot_stage="${OUTPUT_DIR}/.install-staging/boot"
     kernel_stage="${boot_stage}/KERNEL"
+    # Clean on function return (success, failure, or early exit) so root leftovers
+    # never stick around for the invoking user. Clear the RETURN trap afterwards.
+    trap 'install_cleanup_staging; trap - RETURN' RETURN
     rm -rf "${OUTPUT_DIR}/.install-staging"
     mkdir -p "${boot_stage}"
 
@@ -237,8 +249,18 @@ install_from_build() {
         source "${ROOT}/lib/cmdline.sh"
         # shellcheck source=lib/bootimg.sh
         source "${ROOT}/lib/bootimg.sh"
-        repack_bootimg_local_uuid "${kernel_src}" "${kernel_stage}" "${release}" \
-            || cp -f "${kernel_src}" "${kernel_stage}"
+        if ! repack_bootimg_local_uuid "${kernel_src}" "${kernel_stage}" "${release}"; then
+            if [[ "${INSTALL_STRICT:-0}" == "1" ]]; then
+                echo "ERROR: UUID repack failed — refusing to install builder KERNEL." >&2
+                echo "  Run on THIS device with valid root=UUID= in /boot/LinuxLoader.cfg or /boot/KERNEL." >&2
+                return 1
+            fi
+            echo "  WARNING: repack failed — installing template KERNEL (may black-screen on this SD)" >&2
+            cp -f "${kernel_src}" "${kernel_stage}"
+        fi
+    else
+        # Still stage KERNEL when skipping UUID rewrite (cmdline already matches).
+        cp -f "${kernel_src}" "${kernel_stage}"
     fi
 
     if install_boot_is_vfat \
@@ -298,7 +320,17 @@ install_from_build() {
     # shellcheck source=lib/ufs-install.sh
     source "${ROOT}/lib/ufs-install.sh"
     install_ufs_linux_scripts
-    update_internal_ufs_kernel "${kernel_stage}/KERNEL"
+    update_internal_ufs_kernel "${kernel_stage}"
+
+    # shellcheck source=lib/fix-thor-screen.sh
+    source "${ROOT}/lib/fix-thor-screen.sh"
+    print_fix_thor_hint "${build}"
+
+    echo ""
+    echo "AYN Thor / Odin 2 — gyro userspace (external):"
+    echo "  cd ~/Projects/giroscopio && ./install.sh"
+    echo "  (kernel already ships FastRPC/SensorsPD + Thor ADSP firmware + CONFIG_UHID)"
+    echo ""
 
     echo "==> Install complete (${release})" >&2
 }

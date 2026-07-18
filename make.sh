@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kernel_MaSi-OS — compile gaming kernel + ABL bootimg
+# kernel-new-base — SM8550 gaming kernel + ABL bootimg (standalone project)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

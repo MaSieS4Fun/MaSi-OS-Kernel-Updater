@@ -67,20 +67,30 @@ _write_abl_bootimg_cfg() {
 
 _create_abl_bootimg() {
     local zimage="$1" initrd="$2" cfg="$3" kernel_out="$4"
-    local kernel_tmp
+    local kernel_tmp err
     kernel_tmp="$(dirname "${cfg}")/KERNEL.packing"
+    err="$(dirname "${cfg}")/KERNEL.packing.err"
 
-    rm -f "${kernel_tmp}" "${kernel_out}"
+    rm -f "${kernel_tmp}" "${kernel_out}" "${err}"
     mkdir -p "$(dirname "${kernel_out}")" "$(dirname "${kernel_tmp}")"
 
-    if ! abootimg --create "${kernel_tmp}" -f "${cfg}" -k "${zimage}" -r "${initrd}"; then
-        rm -f "${kernel_tmp}"
+    # Pre-create so abootimg never fails with ENOENT on the output path
+    # (some abootimg builds open O_RDWR without O_CREAT).
+    : > "${kernel_tmp}" || {
+        echo "ERROR: cannot create ${kernel_tmp}" >&2
+        return 1
+    }
+
+    if ! abootimg --create "${kernel_tmp}" -f "${cfg}" -k "${zimage}" -r "${initrd}" 2>"${err}"; then
         echo "ERROR: abootimg --create failed for ${kernel_out}" >&2
         echo "  zImage: ${zimage}" >&2
         echo "  initrd: ${initrd}" >&2
         echo "  cfg:    ${cfg}" >&2
+        [[ -s "${err}" ]] && sed 's/^/  abootimg: /' "${err}" >&2
+        rm -f "${kernel_tmp}" "${err}"
         return 1
     fi
+    rm -f "${err}"
 
     mv -f "${kernel_tmp}" "${kernel_out}"
 
@@ -214,8 +224,15 @@ repack_bootimg_local_uuid() {
     mv -f "${cfg}.new" "${cfg}"
 
     mkdir -p "$(dirname "${kernel_out}")"
+    # Some abootimg builds open the output O_RDWR without O_CREAT.
+    : > "${kernel_out}" || {
+        rm -rf "${work}"
+        echo "  repack: cannot create ${kernel_out}" >&2
+        return 1
+    }
     abootimg --create "${kernel_out}" -f "${cfg}" -k "${zimage}" -r "${initrd}" || {
         rm -rf "${work}"
+        rm -f "${kernel_out}"
         return 1
     }
     rm -rf "${work}"
@@ -241,7 +258,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # shellcheck source=lib/output.sh
     source "${ROOT}/lib/output.sh"
 
-    out="$(find "${OUTPUT_DIR:-${ROOT}/output}" -maxdepth 1 -type d -name '*-masi' 2>/dev/null | sort -V | tail -1)"
+    out="$(find "${OUTPUT_DIR:-${ROOT}/output}" -maxdepth 1 -type d -name "*-${OUTPUT_SUFFIX:-kbase}" 2>/dev/null | sort -V | tail -1)"
     [[ -n "${out}" ]] || { echo "No build output found"; exit 1; }
     rel="$(basename "$(find "${out}/modules" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)")"
     pack_bootimg_abl "${out}" "${rel}"

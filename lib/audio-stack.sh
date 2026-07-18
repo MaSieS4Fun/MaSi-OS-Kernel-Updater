@@ -29,11 +29,38 @@ verify_audio_firmware_tree() {
     for dev in odin2 odin2mini odin2portal thor; do
         adsp="${fw_root}/qcom/sm8550/ayn/${dev}/adsp.mbn"
         adsp_dtb="${fw_root}/qcom/sm8550/ayn/${dev}/adsp_dtb.mbn"
+        # Thor gyro: stock Android split ADSP (adsp.mdt + .bXX) with SH5001.
+        if [[ "${dev}" == "thor" && ! -f "${adsp}" ]]; then
+            adsp="${fw_root}/qcom/sm8550/ayn/${dev}/adsp.mdt"
+            adsp_dtb="${fw_root}/qcom/sm8550/ayn/${dev}/adsp_dtb.mdt"
+        fi
         if [[ ! -f "${adsp}" ]]; then
             echo "verify-audio: missing ${adsp}" >&2
             failed=1
             continue
         fi
+        size="$(stat -c %s "${adsp}" 2>/dev/null || echo 0)"
+        if [[ "${adsp}" == *.mbn && "${size}" -lt "${min}" ]]; then
+            echo "verify-audio: ${adsp} too small (${size} bytes)" >&2
+            failed=1
+        fi
+        if [[ "${adsp}" == *.mdt && ! -f "${fw_root}/qcom/sm8550/ayn/${dev}/adsp.b00" ]]; then
+            echo "verify-audio: Thor adsp.mdt without adsp.b00 segments" >&2
+            failed=1
+        fi
+        [[ -f "${adsp_dtb}" ]] || {
+            echo "verify-audio: missing ${adsp_dtb}" >&2
+            failed=1
+        }
+    done
+
+    # AYANEO Pocket boards (symlink/copy of ayn ADSP under qcom/sm8550/ayaneo/)
+    adsp="${fw_root}/qcom/sm8550/ayaneo/adsp.mbn"
+    adsp_dtb="${fw_root}/qcom/sm8550/ayaneo/adsp_dtb.mbn"
+    if [[ ! -f "${adsp}" ]]; then
+        echo "verify-audio: missing ${adsp}" >&2
+        failed=1
+    else
         size="$(stat -c %s "${adsp}" 2>/dev/null || echo 0)"
         if [[ "${size}" -lt "${min}" ]]; then
             echo "verify-audio: ${adsp} too small (${size} bytes)" >&2
@@ -43,7 +70,7 @@ verify_audio_firmware_tree() {
             echo "verify-audio: missing ${adsp_dtb}" >&2
             failed=1
         }
-    done
+    fi
     [[ "${failed}" -eq 0 ]]
 }
 

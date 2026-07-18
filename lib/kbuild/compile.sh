@@ -53,7 +53,7 @@ resolve_dtb_targets() {
 compile_kernel_tree() {
     local src_dir="$1" ver="$2" device_choice="${3:-all}"
     local release="${ver}${KERNEL_LOCALVERSION}"
-    local out="${OUTPUT_DIR}/${release}-${OUTPUT_SUFFIX:-masi}"
+    local out="${OUTPUT_DIR}/${release}-${OUTPUT_SUFFIX:-kbase}"
     local staging
     staging="$(build_staging_dir "${release}")"
     local dtb_staging="${staging}/dtbs"

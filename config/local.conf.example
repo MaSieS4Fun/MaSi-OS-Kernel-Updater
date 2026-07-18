@@ -1,0 +1,4 @@
+# Optional overrides — copy to local.conf
+# KERNEL_VER=7.0.14
+# DEBUG_BOOTLOG=1
+# INSTALL_STRICT=1

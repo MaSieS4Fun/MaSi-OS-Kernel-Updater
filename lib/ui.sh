@@ -7,7 +7,7 @@ SELECTED_KERNEL_VER=""
 ui_banner() {
     clear
     echo "============================================================"
-    echo "  Kernel_MaSi-OS — SM8550 gaming + ABL bootimg"
+    echo "  kernel-new-base — SM8550 gaming + ABL bootimg"
     echo "  golden.config | 11 DTBs | initrd efi-clean"
     echo "============================================================"
     echo ""
@@ -131,7 +131,7 @@ Patches: ${patch_set}
 Config: golden.config + gaming tuning
 Initrd: ${INITRAMFS_PROFILE:-efi-clean}
 DTBs: ABL chain, 11 devices
-Output: ${OUTPUT_DIR}/${ver}${KERNEL_LOCALVERSION}-${OUTPUT_SUFFIX:-masi}/
+Output: ${OUTPUT_DIR}/${ver}${KERNEL_LOCALVERSION}-${OUTPUT_SUFFIX:-kbase}/
 Jobs: ${JOBS}
 
 Generates output/ only — install with sudo ./update.sh or INSTALL.txt."
