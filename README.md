@@ -52,12 +52,6 @@ See [`docs/INTERNAL-UFS-BOOT.md`](docs/INTERNAL-UFS-BOOT.md).
 This kernel is assembled from public upstream work. **Full attribution and
 “what we took from each”:** [`CREDITS.md`](CREDITS.md).
 
-### This project
-
-| Project | Link |
-|---------|------|
-| MaSi-OS Kernel Updater | https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater |
-
 ### Kernel, patches, firmware
 
 | Project | Link | Role here |
