@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # MaSi ABL boot/KERNEL helpers (diagnostics + legacy repair).
-# Normal flow: one KERNEL with root=PARTLABEL=STORAGE — copy to ROCKNIX, no patch.
+# Normal flow: one KERNEL for microSD + UFS —
+#   root=UUID=<sd> + masi.ufsroot=PARTLABEL=STORAGE  (after update.sh)
+#   or legacy root=PARTLABEL=STORAGE only
+# Copy the same file to ROCKNIX — no cmdline patch.
+#
+# Keep in sync with scripts/ufs-linux/ufs-bootimg.sh (installed by update.sh).
 set -euo pipefail
 
 UFS_INTERNAL_CMDLINE='clk_ignore_unused pd_ignore_unused quiet rw rootwait root=PARTLABEL=STORAGE rootfstype=ext4 errors=remount-ro mem_sleep_default=deep ufshcd_core.uic_cmd_timeout=3000'
@@ -56,17 +61,21 @@ patch_kernel_for_internal_boot() {
     [[ -s "${dst}" ]]
 }
 
+# Accept current dual-boot cmdline OR legacy UFS-only PARTLABEL root.
+# IMPORTANT: test masi.ufsroot before root=PARTLABEL — the token
+# "root=PARTLABEL=STORAGE" is a substring of "masi.ufsroot=PARTLABEL=STORAGE".
 verify_internal_kernel_cmdline() {
     local kernel="$1" cmdline
 
     cmdline="$(read_bootimg_cmdline "${kernel}" || true)"
     [[ -n "${cmdline}" ]] || return 1
-    # Dual-boot KERNEL: root=UUID= + masi.ufsroot, or legacy root=PARTLABEL= only
     if [[ "${cmdline}" == *'masi.ufsroot=PARTLABEL=STORAGE'* ]]; then
         [[ "${cmdline}" == *'root=UUID='* ]] || return 1
         return 0
     fi
-    [[ "${cmdline}" == *'root=PARTLABEL=STORAGE'* ]] || return 1
+    # Legacy UFS-only: standalone root=PARTLABEL= (not inside masi.ufsroot=)
+    [[ "${cmdline}" == 'root=PARTLABEL=STORAGE'* \
+        || "${cmdline}" == *' root=PARTLABEL=STORAGE'* ]] || return 1
 }
 
 describe_kernel_root() {
@@ -77,7 +86,8 @@ describe_kernel_root() {
         echo "unknown (could not read bootimg cmdline)"
     elif [[ "${cmdline}" == *'masi.ufsroot=PARTLABEL=STORAGE'* && "${cmdline}" == *'root=UUID='* ]]; then
         echo "dual-boot (SD root=UUID + UFS masi.ufsroot=PARTLABEL=STORAGE)"
-    elif [[ "${cmdline}" == *'root=PARTLABEL=STORAGE'* ]]; then
+    elif [[ "${cmdline}" == 'root=PARTLABEL=STORAGE'* \
+            || "${cmdline}" == *' root=PARTLABEL=STORAGE'* ]]; then
         echo "UFS-only cmdline (run update.sh for dual-boot SD+UFS)"
     elif [[ "${cmdline}" == *'root=UUID='* ]]; then
         echo "microSD only (legacy — run update.sh for UFS dual-boot)"

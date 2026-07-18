@@ -191,7 +191,9 @@ verify_unified_abl_cmdline() {
         return 0
     fi
 
-    [[ "${cmdline}" == *"root=PARTLABEL=${partlabel}"* ]] || return 1
+    # Legacy UFS-only — avoid matching inside masi.ufsroot=PARTLABEL=
+    [[ "${cmdline}" == "root=PARTLABEL=${partlabel}"* \
+        || "${cmdline}" == *" root=PARTLABEL=${partlabel}"* ]] || return 1
     return 0
 }
 

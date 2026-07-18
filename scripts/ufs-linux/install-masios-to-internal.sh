@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-VERSION="1.7.0"
+VERSION="1.7.1"
 
 # shellcheck source=ufs-bootimg.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ufs-bootimg.sh"
@@ -337,9 +337,16 @@ check_boot_files() {
     die "${BOOT_SRC}/KERNEL looks too small (${ksize} bytes)"
   fi
   cmdline="$(read_bootimg_cmdline "${BOOT_SRC}/KERNEL" 2>/dev/null || true)"
-  if ! read_bootimg_cmdline "${BOOT_SRC}/KERNEL" 2>/dev/null | grep -qE 'masi\.ufsroot=PARTLABEL=STORAGE|root=PARTLABEL=STORAGE'; then
+  if ! verify_internal_kernel_cmdline "${BOOT_SRC}/KERNEL"; then
     die "Outdated ${BOOT_SRC}/KERNEL (need dual-boot cmdline).
-Rebuild and install: cd Kernel_MaSi-OS && ./make.sh && sudo ./update.sh"
+Expected either:
+  root=UUID=<microSD> masi.ufsroot=PARTLABEL=STORAGE
+or legacy:
+  root=PARTLABEL=STORAGE
+Got: $(read_bootimg_cmdline "${BOOT_SRC}/KERNEL" 2>/dev/null || echo '(unreadable)')
+Rebuild and install on THIS device:
+  cd ~/Projects/kernel-new-base   # or MaSi-OS-Kernel-Updater checkout
+  ./make.sh && sudo ./update.sh"
   fi
   log "Boot files OK: ${BOOT_SRC}/KERNEL ($(numfmt --to=iec-i --suffix=B "$ksize" 2>/dev/null || echo "${ksize} B"))"
   log "KERNEL root: $(describe_kernel_root "${BOOT_SRC}/KERNEL")"
@@ -608,7 +615,7 @@ copy_boot() {
   md5sum "${TMP_BOOT}/KERNEL" | awk '{print $1}' > "${TMP_BOOT}/KERNEL.md5"
   [[ -f "${TMP_BOOT}/KERNEL" ]] || die "KERNEL was not written to ROCKNIX partition"
   verify_internal_kernel_cmdline "${TMP_BOOT}/KERNEL" \
-    || die "Verify failed: KERNEL missing root=PARTLABEL=STORAGE (run ./make.sh && sudo ./update.sh)"
+    || die "Verify failed: KERNEL not dual-boot capable (need root=UUID + masi.ufsroot=PARTLABEL=STORAGE, or root=PARTLABEL=STORAGE). Run ./make.sh && sudo ./update.sh"
   sync
 }
 
@@ -619,7 +626,7 @@ verify_install() {
   log "Verifying installation before reboot..."
   [[ -f "${TMP_BOOT}/KERNEL" ]] || die "Verify failed: no KERNEL on ROCKNIX partition"
   verify_internal_kernel_cmdline "${TMP_BOOT}/KERNEL" \
-    || die "Verify failed: KERNEL cmdline is not set for dual boot (expected root=PARTLABEL=STORAGE)"
+    || die "Verify failed: KERNEL cmdline is not dual-boot (need root=UUID + masi.ufsroot, or root=PARTLABEL=STORAGE)"
   [[ -d "${TMP_ROOT}/etc" ]] || die "Verify failed: STORAGE rootfs looks empty"
   [[ -f "${TMP_ROOT}/etc/fstab" ]] || die "Verify failed: missing /etc/fstab on STORAGE"
   grep -q 'PARTLABEL=STORAGE' "${TMP_ROOT}/etc/fstab" \

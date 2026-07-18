@@ -79,8 +79,10 @@ verify_build_output() {
     if verify_unified_abl_cmdline "${cmdline}"; then
         echo "  OK  cmdline: dual-boot (root=UUID + masi.ufsroot or PARTLABEL)" >&2
     else
-        echo "  ERROR: KERNEL cmdline missing root=PARTLABEL=STORAGE" >&2
-        echo "        ${cmdline}" >&2
+        echo "  ERROR: KERNEL cmdline is not dual-boot capable" >&2
+        echo "        need: root=UUID=… + masi.ufsroot=PARTLABEL=STORAGE" >&2
+        echo "           or: root=PARTLABEL=STORAGE" >&2
+        echo "        got:  ${cmdline}" >&2
         rm -rf "${work}"
         return 1
     fi
