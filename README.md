@@ -3,11 +3,6 @@
 SM8550 gaming kernel for AYN / Retroid / AYANEO handhelds, packaged as a
 ROCKNIX-ABL **`boot/KERNEL`** bootimg — with **strict multi-device install**.
 
-**GitHub:** [MaSieS4Fun/MaSi-OS-Kernel-Updater](https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater)
-
-Local checkouts may appear as `kernel-new-base` or `Kernel_MaSi-OS`: that is the
-**same project**, split only for compatibility while developing. Releases and
-docs target the single GitHub repository above.
 
 ## Quick start
 
