@@ -3,6 +3,8 @@
 SM8550 gaming kernel for AYN / Retroid / AYANEO handhelds, packaged as a
 ROCKNIX-ABL **`boot/KERNEL`** bootimg — with **strict multi-device install**.
 
+## Performance Kernel
+Technical breakdown: **[GAMING-PERFORMANCE.md](https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater/blob/main/docs/GAMING-PERFORMANCE.md)**
 
 ## Quick start
 
