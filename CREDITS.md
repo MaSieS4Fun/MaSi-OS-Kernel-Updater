@@ -3,10 +3,6 @@
 **MaSi-OS Kernel Updater** —
 [github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater](https://github.com/MaSieS4Fun/MaSi-OS-Kernel-Updater)
 
-Local directories `kernel-new-base` and `Kernel_MaSi-OS` are the **same project**,
-kept apart only for compatibility while developing. They publish to the **same
-GitHub repository**.
-
 This tree builds the SM8550 gaming kernel with **strict multi-device install**
 (`INSTALL_STRICT=1`), Thor touch packaging, and ADSP Sensor Core (gyro)
 **kernel** support. Gyro **userspace** lives in the separate `giroscopio` project.
