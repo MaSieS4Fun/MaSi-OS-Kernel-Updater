@@ -1,5 +1,0 @@
-# Vendored ABL DTB chain (optional).
-# Generate with: ./scripts/vendor-dtb-chain.sh /path/to/ROCKNIX/KERNEL
-# If slot-00.dtb … slot-10.dtb exist here, the build uses them instead of extracting ROCKNIX.
-
-/device-tree/vendored/*.dtb
