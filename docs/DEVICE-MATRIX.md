@@ -8,7 +8,7 @@ Rocknix-ABL / LinuxLoader picks `chain[device_index]`.
 | 0 | AYN Odin 3 | SM8750 | reference blob (wrong SoC for this kernel) |
 | 1 | AYN Odin 2 Portal | SM8550 | kbuild `qcs8550-ayn-odin2portal.dtb` |
 | 2 | AYN Odin 2 | SM8550 | kbuild `qcs8550-ayn-odin2.dtb` |
-| 3 | AYN Odin 2 Mini | SM8550 | kbuild `qcs8550-ayn-odin2mini.dtb` |
+| 3 | AYN Odin 2 Mini | SM8550 | **reference** `slot-03.dtb` (ARMADA Mini; kbuild deferred — black-screen reports) |
 | 4 | AYN Thor | SM8550 | kbuild `qcs8550-ayn-thor.dtb` |
 | 5–6 | Retroid Pocket 6 | SM8550 | kbuild `qcs8550-retroidpocket-rp6.dtb` |
 | 7 | KONKR Pocket FIT | SM8650 | reference blob (wrong SoC) |

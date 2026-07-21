@@ -15,7 +15,7 @@ Extracted from `armada-boot-partition/KERNEL` (works on all SM8550 units):
 | 0 | (Odin 3 / other SoC — index padding) |
 | **1** | **Odin 2 Portal** |
 | **2** | **Odin 2** |
-| **3** | **Odin 2 Mini** |
+| **3** | **Odin 2 Mini** (ARMADA reference DTB — not kbuild) |
 | **4** | **Thor** |
 | **5 / 6** | **Retroid Pocket 6** |
 | 7–8 | SM8650 refs (Pocket FIT, Pocket S2 — **wrong SoC** for this kernel) |

@@ -12,6 +12,7 @@ En cada consola: `sudo ./update.sh` (desde `kernel-new-base`).
 - ABL tiene **otro modelo** en «Set the Device»
 - Odin 2 vs Mini vs Portal comparten IDs; ABL usa el **nombre guardado**, no autodetect
 - Solución: Vol Abajo → Set the Device → modelo exacto → Linux → START
+- **Odin 2 Mini:** el slot 3 del `KERNEL` MaSi usa el DTB de referencia ARMADA (no el DTB kbuild Armbian), porque hubo reportes de pantalla negra sin log solo en Mini. Tras `./make.sh` + `update.sh`, reprobar Mini.
 
 ### B) Initramfs no encuentra root (a veces pantalla negra con `quiet`)
 

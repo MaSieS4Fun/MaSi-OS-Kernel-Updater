@@ -13,7 +13,11 @@
 0|reference|slot-00.dtb|slot0-ref
 1|kbuild|qcs8550-ayn-odin2portal.dtb|portal
 2|kbuild|qcs8550-ayn-odin2.dtb|odin2
-3|kbuild|qcs8550-ayn-odin2mini.dtb|mini
+# Mini: use ARMADA reference DTB (known-good panel/BL: xm91080g + odin2miniled).
+# Armbian kbuild Mini has caused black screen + no initramfs log for some testers
+# while Portal/Odin2/Thor/RP6 on the same MaSi Image boot fine. Revisit kbuild when
+# a Mini tester confirms DEBUG_BOOTLOG reaches /boot/masi-boot.log.
+3|reference|slot-03.dtb|mini
 4|kbuild|qcs8550-ayn-thor.dtb|thor
 5|kbuild|qcs8550-retroidpocket-rp6.dtb|rp6
 6|kbuild|qcs8550-retroidpocket-rp6.dtb|rp6-alt
