@@ -1186,7 +1186,7 @@ warn_config_source() {
 
 apply_gaming_kconfig_overrides() {
     local src_dir="$1" cfg="${src_dir}/.config" sc="${src_dir}/scripts/config"
-    local gov="${CPUFREQ_GOVERNOR:-schedutil}"
+    local gov="${CPUFREQ_GOVERNOR:-performance}"
     [[ -f "${cfg}" && -x "${sc}" ]] || return 0
 
     echo "==> Overrides gaming kconfig (cpufreq: ${gov})" >&2

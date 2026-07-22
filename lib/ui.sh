@@ -8,7 +8,7 @@ ui_banner() {
     clear
     echo "============================================================"
     echo "  kernel-new-base — SM8550 gaming + ABL bootimg"
-    echo "  golden.config | 11 DTBs | initrd efi-clean"
+    echo "  golden.config (max performance) | ABL DTBs | initrd efi-clean"
     echo "============================================================"
     echo ""
 }
@@ -128,7 +128,7 @@ ui_confirm_build() {
     local msg
     msg="Kernel: linux-${ver}
 Patches: ${patch_set}
-Config: golden.config + gaming tuning
+Config: golden.config (max performance / CPUFREQ=performance)
 Initrd: ${INITRAMFS_PROFILE:-efi-clean}
 DTBs: ABL chain, 11 devices
 Output: ${OUTPUT_DIR}/${ver}${KERNEL_LOCALVERSION}-${OUTPUT_SUFFIX:-kbase}/

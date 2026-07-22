@@ -35,6 +35,9 @@ prepare_firmware_masi() {
                 cp -a "${system_src}/${path}" "${fw_out}/${path}"
                 echo "  + ${path}" >&2
             done
+            # shellcheck source=lib/firmware-download.sh
+            source "${ROOT}/lib/firmware-download.sh"
+            firmware_ensure_a740_zap_alias "${fw_out}"
             ;;
         download|*)
             # shellcheck source=lib/firmware-download.sh

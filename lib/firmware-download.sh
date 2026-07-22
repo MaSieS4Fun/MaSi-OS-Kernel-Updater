@@ -121,8 +121,35 @@ _firmware_stage_copy() {
         echo "  + qcom/sm8550/ayaneo/{adsp,adsp_dtb}.mbn -> ayn/odin2" >&2
     fi
 
+    # ARMADA Mini DTB (slot-03 reference) asks for qcom/sm8550/a740_zap.mbn;
+    # Armbian/MaSi only ship ayn/ (and sheng/). Without this alias Turnip fails
+    # with "could not get GPU ID" and gamescope falls back to llvmpipe.
+    firmware_ensure_a740_zap_alias "${dest}"
+
     local n
     n="$(find "${dest}" -type f 2>/dev/null | wc -l | tr -d ' ')"
     echo "  ${n} files ($(du -sh "${dest}" | cut -f1))" >&2
     [[ "${n}" -gt 0 ]]
+}
+
+# Create qcom/sm8550/a740_zap.mbn → ayn (or sheng) so reference Mini DTB can load ZAP.
+firmware_ensure_a740_zap_alias() {
+    local dest="$1"
+    local sm="${dest}/qcom/sm8550"
+    local target=""
+
+    [[ -d "${sm}" ]] || return 0
+    if [[ -e "${sm}/a740_zap.mbn" ]]; then
+        return 0
+    fi
+    if [[ -f "${sm}/ayn/a740_zap.mbn" ]]; then
+        target="ayn/a740_zap.mbn"
+    elif [[ -f "${sm}/sheng/a740_zap.mbn" ]]; then
+        target="sheng/a740_zap.mbn"
+    else
+        echo "  WARNING: no a740_zap.mbn under ayn/ or sheng/ — Mini GPU may fail" >&2
+        return 0
+    fi
+    ln -sfn "${target}" "${sm}/a740_zap.mbn"
+    echo "  + qcom/sm8550/a740_zap.mbn -> ${target} (ARMADA Mini DTB)" >&2
 }
